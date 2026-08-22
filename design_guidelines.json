@@ -1,0 +1,130 @@
+{
+  "theme": "light",
+  "typography": {
+    "font_families": {
+      "headings": "'Cabinet Grotesk', sans-serif",
+      "body": "'IBM Plex Sans', sans-serif",
+      "data": "'IBM Plex Mono', monospace"
+    },
+    "hierarchy": {
+      "h1": "text-4xl sm:text-5xl font-bold tracking-tight text-slate-900",
+      "h2": "text-2xl sm:text-3xl font-semibold tracking-tight text-slate-800",
+      "h3": "text-xl sm:text-2xl font-medium tracking-tight text-slate-800",
+      "h4": "text-lg sm:text-xl font-medium text-slate-700",
+      "body": "text-base leading-relaxed text-slate-600",
+      "data_large": "text-2xl font-mono tracking-tight tabular-nums",
+      "data_standard": "text-base font-mono tabular-nums",
+      "labels": "text-xs font-semibold uppercase tracking-[0.2em] text-slate-500"
+    },
+    "imports": [
+      "@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500;600&display=swap');",
+      "@import url('https://api.fontshare.com/v2/css?f[]=cabinet-grotesk@800,500,700,400&display=swap');"
+    ]
+  },
+  "colors": {
+    "archetype": "SWISS & HIGH-CONTRAST (Authority, Clarity, Truth) adapted for Finance",
+    "primary": "#0F172A",
+    "primary_foreground": "#FFFFFF",
+    "background": "#F8FAFC",
+    "surface": "#FFFFFF",
+    "border": "#E2E8F0",
+    "semantic": {
+      "positive_owed": {
+        "text": "#16A34A",
+        "bg": "#DCFCE7",
+        "border": "#BBF7D0",
+        "icon": "↑",
+        "usage": "When a resident is owed money or has a credit balance."
+      },
+      "negative_owes": {
+        "text": "#DC2626",
+        "bg": "#FEE2E2",
+        "border": "#FECACA",
+        "icon": "↓",
+        "usage": "When a resident owes money for maintenance/water."
+      },
+      "warning_drawdown": {
+        "text": "#D97706",
+        "bg": "#FEF3C7",
+        "border": "#FDE68A",
+        "icon": "!",
+        "usage": "Negative reserve drawdown flagged."
+      }
+    }
+  },
+  "layouts": {
+    "web_dashboard": {
+      "strategy": "High Density Grid (For Dashboards / Analytics)",
+      "base_grid": "grid-cols-1 md:grid-cols-3 lg:grid-cols-4",
+      "gap": "gap-4 or gap-6",
+      "container_padding": "p-6 lg:p-8",
+      "alignment": "Strict grid hierarchy. Left-align text, right-align monetary/meter values."
+    },
+    "mobile_field_entry": {
+      "strategy": "Mobile-first, huge touch targets.",
+      "container_padding": "p-4",
+      "inputs": "Big number pads, 48px minimum height for inputs and buttons.",
+      "camera_upload": "Full width dropzone/button taking prominent screen real estate."
+    },
+    "surfaces": {
+      "cards": "Flat Solid background (bg-white), 1px subtle border (border-slate-200), NO heavy shadows, rounded-md (max 8px radius). Financial apps need solid grounding.",
+      "headers": "Solid Background with a hard bottom border for financial apps. Glassmorphism is discouraged for strict data apps."
+    }
+  },
+  "components": {
+    "tables": "Dense, crisp. Use `tabular-nums` for all columns containing numbers. Highlight rows on hover with `hover:bg-slate-50`. Right-align numerical columns.",
+    "badges": "Semantic only. Never rely on color alone. Always pair color with an icon (+/- or up/down arrows).",
+    "buttons": "Sharp or slightly rounded (rounded-md). High contrast. Hover state must increase contrast.",
+    "forms": "Use Shadcn Form primitives adapted for .js/.jsx. For mobile, use native number inputs optimized for numpad display.",
+    "tabs": "Flat, cardless tab lists. Override Shadcn default `h-9` to `h-auto` to prevent cutoff.",
+    "icons_library": "@phosphor-icons/react (best for dense dashboards, use Duotone or Regular weight)."
+  },
+  "motion": {
+    "philosophy": "Minimalist — use micro-interactions for feedback.",
+    "hover_states": "Slight background color shifts (`bg-slate-50`), border color darkening.",
+    "transitions": "Use specific properties (e.g., `transition: background-color 0.2s ease, border-color 0.2s ease`). NO `transition: all`.",
+    "page_load": "Staggered fade-in for table rows or dashboard widgets."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text meets minimum 4.5:1 contrast. Use Text Shadow over images if needed.",
+    "color_blindness": "Semantic colors (red/green) MUST be accompanied by icons or text labels (e.g., '+ ₹500' or '↓ ₹500').",
+    "testing": "All interactive elements MUST include `data-testid` in kebab-case based on role (e.g., `data-testid='submit-meter-reading-btn'`).",
+    "focus": "High contrast focus rings: `focus:ring-2 focus:ring-slate-900 focus:outline-none`."
+  },
+  "media": {
+    "images": "Use subtle, desaturated images for login/hero backgrounds to maintain a professional, administrative feel. Do not overuse images inside the dashboard.",
+    "photo_uploads": "UI must clearly show thumbnails of uploaded GPS-encoded photos for water tankers."
+  },
+  "image_urls": [
+    {
+      "url": "https://images.unsplash.com/photo-1515263487990-61b07816b324?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1ODR8MHwxfHNlYXJjaHwxfHxtb2Rlcm4lMjBhcGFydG1lbnQlMjBidWlsZGluZyUyMGV4dGVyaW9yJTIwZGF5fGVufDB8fHx8MTc4NzM4OTU4NXww&ixlib=rb-4.1.0&q=85",
+      "description": "Modern apartment building exterior (black and white concrete)",
+      "category": "login_background or empty_state_buildings"
+    },
+    {
+      "url": "https://images.pexels.com/photos/16966615/pexels-photo-16966615.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "description": "White water tanker truck side view",
+      "category": "empty_state_tankers or placeholder_tanker_image"
+    }
+  ],
+  "general_ui_ux_guidelines": [
+    "Prioritize precision and auditability over generic 'SaaS' aesthetics.",
+    "Use a two-font system: Cabinet Grotesk for headings and IBM Plex Sans/Mono for UI and Data to create an editorial, highly functional look.",
+    "Never hide underlying data; explicitly show 'freshness' timestamps or calculation logic (e.g., Avg per-litre cost).",
+    "Empty states must be intentional: explain why it's empty and provide a clear CTA.",
+    "Mobile views must prioritize 'thumb-zone' ergonomics. Critical actions like 'Add Reading' or 'Upload Photo' should be large bottom-fixed buttons.",
+    "DO NOT use a transparent background in headers or overlays.",
+    "Never apply universal transitions like `transition: all`. Target specific properties.",
+    "Do not center-align the main App container. Left-alignment is standard for data-heavy apps."
+  ],
+  "instructions_to_main_agent": [
+    "Install required dependencies: `yarn add @phosphor-icons/react lucide-react sonner clsx tailwind-merge`.",
+    "Update `/app/frontend/tailwind.config.js` to extend colors defined in these guidelines and incorporate 'Cabinet Grotesk' and 'IBM Plex Sans' into the theme.",
+    "Import fonts via Google Fonts and Fontshare in `/app/frontend/src/index.css`.",
+    "Create a clean, sidebar-based layout for the Web Admin Console and a Bottom-Tab layout for Mobile users.",
+    "Implement pure HTML/Tailwind for custom layouts, and use Shadcn for complex interactive components (Tables, Dialogs, Select) adapting them for .jsx extension.",
+    "Ensure the 'tabular-nums' utility class is applied to ALL spans/divs displaying currency or meter readings.",
+    "Implement Sonner for all success/error toasts (`import { Toaster } from 'sonner'`).",
+    "Add `data-testid` to all inputs, buttons, and links. Example: `data-testid='login-submit-button'`."
+  ]
+}

@@ -1,0 +1,56 @@
+{
+  "summary": "Full backend + frontend E2E test of SocietyHub. Backend: created /app/backend/tests/backend_test.py (33 pytest cases) covering auth/JWT/cookies/lockout, demo-seed idempotency, property/flat/meter/tank CRUD, defaults persistence, tanker auto-calc, readings bulk save, charges + apply-defaults idempotency, payments/payouts, statement engine math (verified against manual calculation), meter_rollback + negative_reserve flags, month reset with lock/carry-in/opening-reading carry-over, 423 on locked writes, MIS CSV+PDF, uploads (image/video/reject + download), role restrictions. 29/33 passed. Frontend: Playwright flows for login (valid/invalid), dashboard per-flat table (numbers reconciled manually against seeded data: 24000 L / Rs.3650 / avg 0.1521 / reserve 2400 L / recurring 6800 / maint 8600 all correct), water tanker live auto-sum + per-litre + save/delete + media upload with thumbnail, readings save + rollback flag, Setup CRUD (building/flat/meter/tank + deletes) and defaults persistence after reload, charges apply-defaults idempotency + manual recurring with person/payer override + one-time maintenance bifurcation, reconciliation (tenant payment reduces net and lands in Tenant paid column, payout increases net, fronted contributions deducted, red owes / green owed), month reset dialog + lock + read-only + carry-in Rs.10,011 into September + closing 1120 becoming next-month opening, MIS on-screen + valid CSV (520 B) and PDF (2.8 KB) downloads, resident role restriction, mobile 390x844. All destructive tests were run on a throwaway 'QA Tower UI' building; the demo building was restored to its original figures and left open.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/files/{file_id}?auth=<anything>", "issue": "Auth bypass: the endpoint only checks that the `auth` query param is non-empty and never validates the JWT, so any unauthenticated caller can download any uploaded photo/video by id (verified: `?auth=any-garbage` returned 200 + file bytes).", "priority": "CRITICAL"},
+      {"endpoint": "GET /api/mis/export (+ /api/flats, /api/charges, /api/payments, /api/tankers, /api/properties)", "issue": "Owner/resident data leak: /api/statement is scoped to the user's flat, but MIS export is not — resident tenant1@societyhub.com downloaded the full-building CSV containing flats 102/201/202 owner names and balances. The list endpoints and /api/properties are also readable by residents for any property_id.", "priority": "HIGH"},
+      {"endpoint": "POST /api/auth/login", "issue": "Brute-force lockout ineffective in this deployment: the lockout identifier is `client.host:email`, and behind the ingress the observed client IP alternates between replica IPs (10.208.135.204/.205), so 7 consecutive bad passwords produced 7x401 and the counters split 4/3 — 429 never fires. Key the counter on email (and/or X-Forwarded-For) instead.", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "CORS middleware", "issue": "CORS_ORIGINS=* with allow_credentials=True returns `Access-Control-Allow-Origin: *` together with `Allow-Credentials: true` (and the preflight OPTIONS response has no allow-credentials header at all). Invalid combination for cookie auth — harmless today only because the SPA is same-origin. Use explicit origins."},
+      {"endpoint": "POST /api/uploads", "issue": "storage.put_object/get_object use blocking `requests` inside async handlers, blocking the event loop for the whole upload/download (40 MB limit). Wrap in run_in_threadpool or use httpx.AsyncClient."},
+      {"endpoint": "POST /api/charges/apply-defaults", "issue": "Duplicate suppression is per charge_type, so if an admin has already entered a manual charge of that type the fixed monthly default is silently skipped (no feedback distinguishing 'already applied' from 'skipped because manual entry exists')."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Reconcile / Layout period switcher", "issue": "After confirming 'Close & reset month' the toast says 'August 2026 locked. September 2026 is now open.' but the app stays on the locked August period (switcher shows 'August 2026 · locked' and all forms become read-only). The user must manually switch periods; the spec expects the new month to open.", "selector": "[data-testid=\"period-switcher\"]", "priority": "MEDIUM"},
+      {"component": "Layout (locked banner)", "issue": "When the locked banner is shown the sidebar keeps `top-14`, so the banner overlays the first nav item — 'Dashboard' is half hidden/unclickable region behind the amber banner.", "selector": "[data-testid=\"locked-banner\"] / [data-testid=\"nav-dashboard\"]", "priority": "MEDIUM"},
+      {"component": "Water > Meter readings", "issue": "For a rolled-back meter the readings table displays consumption -500 (amber) while the engine bills 0 L for that meter; the two views disagree. Show 0 (or 'flagged / excluded') to match the statement.", "selector": "[data-testid=\"reading-row-Meter 101\"]", "priority": "LOW"},
+      {"component": "Login.jsx", "issue": "React console error on every login: 'Cannot update a component (BrowserRouter) while rendering a different component (Login)' — setState/navigate called during render.", "selector": "n/a", "priority": "LOW"},
+      {"component": "Sonner toaster", "issue": "Toasts render top-right and completely cover the property switcher and period switcher for ~4s after every save.", "selector": "[data-testid=\"property-switcher\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Resident (view-only) login", "issue": "Resident sees the property switcher listing ALL buildings and is left on whichever property is selected globally; on a building where they have no flat MyDues shows 'No statement for this period' instead of defaulting to their own building/flat. Nav restriction and /setup redirect work correctly.", "affected_selectors": ["[data-testid=\"property-switcher\"]", "[data-testid=\"nav-my-dues\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Mobile 390x844", "issues": ["Horizontal overflow of the page shell: dashboard +115px, Water tanker-form tab +401px, Water readings tab +115px (measured scrollWidth-clientWidth); screenshots show content clipped on the left. Header (hamburger + logo + 150px property select + 130px period select + logout) alone cannot fit in 390px.", "Sidebar hamburger toggle, 48px-tall number inputs and live total/per-litre calc all work correctly on mobile."]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Validate the JWT in GET /api/files/{id} (currently any non-empty ?auth value grants access).",
+    "Scope /api/mis/export (and list endpoints /api/flats, /api/charges, /api/payments, /api/tankers, /api/properties) for owner/resident roles.",
+    "Key login-attempt lockout on the email (or X-Forwarded-For) — client.host varies per ingress replica so 429 never triggers.",
+    "Set explicit CORS origins instead of '*' when allow_credentials=True.",
+    "After a successful month reset, switch the UI to the newly opened next month.",
+    "Fix locked-banner overlap of the first sidebar nav item and the mobile horizontal overflow (header controls + water form grid).",
+    "Make the readings table show 0 consumption for a flagged rolled-back meter so it matches the statement.",
+    "Fix setState-during-render in Login.jsx; move the toaster so it does not cover the property/period switchers."
+  ],
+  "critical_code_review_comments": [
+    "server.py:709 download_file — presence check `if not A.extract_token(request) and not auth` is not authentication; decode the token (or a signed short-lived file token) before serving bytes.",
+    "server.py:597 mis_export uses Depends(current_user) with no role scoping while /statement filters rows — same data must be filtered in both places (and the totals block in /statement still exposes building-wide figures to residents).",
+    "auth.py:103 lockout window keyed on request.client.host defeats itself behind a multi-replica proxy; also nothing rate-limits /auth/register.",
+    "storage.py uses sync requests inside async FastAPI handlers — offload to a threadpool.",
+    "server.py is 836 lines and mixes auth, CRUD, exports and seeding; consider splitting into routers (auth/setup/water/charges/reports)."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "88% (29/33 pytest cases)", "frontend": "~82% (all core admin flows pass; 5 UI/mobile defects)"},
+  "seed_data_creation": "Used the existing demo seed (Sunrise Residency). Created and then deleted a throwaway 'QA Tower UI' building via the UI (flat A1, meter, tank, charges, payments, tanker with uploaded PNG, month reset). Pytest creates and deletes TEST_* properties. Demo data was restored to its original figures (24000 L / Rs.3650 / 21600 L consumed / Rs.6800 recurring / Rs.8600 maintenance, period 2026-08 still open, no flags).",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@societyhub.com/admin123 (super_admin), tenant1@societyhub.com/demo123 (resident) — both verified working",
+  "context_for_next_testing_agent": "Regression suite: `cd /app/backend && python -m pytest tests/backend_test.py -v` (uses pytest.ini -n 2 --dist loadscope; each class gets its own TEST_ property so it is safe to re-run and self-cleans). The 4 known failures are the real defects listed above (files auth bypass, resident MIS leak, lockout, CORS). Demo month is 2026-08 and is intentionally left OPEN — do not reset it; do destructive month-reset tests on a throwaway building as done here. Frontend selectors used: nav-*, setup-tab-*, water-tab-*, tanker-*, reading-opening/closing-{meter label}, apply-defaults-btn, recurring-*/adhoc-*, payment-*, month-reset-btn/reset-confirm-btn, export-csv-btn/export-pdf-btn, tanker-media-file-input (set_input_files works). Note charge-type option labels are 'Cleaning / Maid', 'Sweeper', 'Building Security', 'Common Electricity', 'Miscellaneous' (not the raw keys).",
+  "rca_of_the_issue": "files auth bypass: download_file only tests truthiness of the `auth` query param, never decoding it. MIS leak: mis_export shares build_statement with /statement but skips the owner/resident row-filter block. Lockout: identifier = f'{request.client.host}:{email}' and the preview ingress terminates connections from multiple pod IPs, so each replica keeps its own sub-threshold counter. UI reset: Reconcile calls /periods/reset and refreshes data but never calls setMonth(next_month), so AppContext keeps the now-locked month selected."
+}
