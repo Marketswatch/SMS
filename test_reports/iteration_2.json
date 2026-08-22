@@ -1,0 +1,36 @@
+{
+  "summary": "Focused verification of the tips-in-per-litre bug fix plus light regression (dashboard/charges/reconcile/MIS/exports/month-reset). Backend: updated stale assertions in backend_test.py to the new expected behaviour and added a dedicated TestTipsInWaterCost class (per-tanker total_cost/cost_per_litre, statement totals, no-double-count invariant, tip-payer contribution credit, demo figures, CSV labels). 36/37 pytest tests pass; the single failure is a real CORS misconfiguration, unrelated to this fix. Frontend: verified Water form live 'Lorry + tips' subtotal (Rs.1,300) and 'Cost per litre (incl. tips)' (0.1625) with sump 6000 / syntex 2000 / amount 1200 / tips 100, tanker table columns Lorry/Tips/Total cost/Rs.per-L, Charges 'Tanker tips ... part of water cost, not recurring' = Rs.300, MIS labels 'Water spend (lorry + tips)' + 'Tanker tips (part of water cost)', CSV+PDF downloads OK, Dashboard/Reconciliation load with reconciling numbers. Created one UI tanker end-to-end (new row correctly showed 0.1625/L) and deleted it; demo data restored (3950 / 0.1646 / recurring 6500 / billable 19050).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "CORS middleware (server.py:824-826)", "issue": "allow_credentials=True with allow_origins defaulting to '*' (CORS_ORIGINS unset). Browsers reject wildcard+credentials, so cookie auth breaks for any cross-origin client. Playbook requires explicit origins. Test TestAuth::test_cors_credentials_not_wildcard fails."},
+      {"endpoint": "POST /api/charges", "issue": "charge_type 'tips' is still in engine.RECURRING_TYPES and DEFAULT_PAYERS, so an API-created 'tips' charge would again be split equally into recurring_total (reintroduces the reported bug). The UI no longer offers it (CHARGE_TYPES), but the backend still accepts it."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Water.jsx tanker table (Rs./L column)", "issue": "Column renders the stored tk.cost_per_litre while the adjacent 'Total cost' cell is computed live as amount+tips. For pre-fix rows (demo seed) this shows stale lorry-only values: 1200+100 row shows 0.1500 and 1250+100 row shows 0.1562 instead of 0.1625 / 0.1688 — inconsistent with the Total cost cell in the same row and with the statement avg. Newly created tankers are correct. Fix: derive per-litre in the UI as (amount+tips)/total_qty (and/or backfill the stored field).", "selector": "[data-testid^=\"tanker-row-\"] td:nth-child(8)", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": ["/app/backend/tests/backend_test.py", "/app/test_reports/pytest/pytest_results.xml"],
+  "action_items": [
+    "Set CORS_ORIGINS to explicit origin(s) instead of '*' since allow_credentials=True (or drop credentials).",
+    "Remove 'tips' from engine.RECURRING_TYPES / DEFAULT_PAYERS (or reject it in POST /api/charges) so tips cannot be re-created as an equally-split recurring charge.",
+    "Water tanker table: compute Rs./L from (amount + tips)/total_qty instead of the stored cost_per_litre so legacy rows are not shown with stale lorry-only rates."
+  ],
+  "critical_code_review_comments": [
+    "engine.compute_statement is correct: total_spend = sum(amount) + total_tips, avg = total_spend/total_litres, tips excluded from recurring_total, tip payer still credited once in contributions — invariant billable_total == water + recurring + maintenance verified (19050 on demo, 3300 on a synthetic property).",
+    "Stored per-tanker cost_per_litre is a denormalised field that can go stale after formula changes; either always derive at read time or add a migration/backfill.",
+    "server.py is 849 lines — consider splitting routers (auth/setup/water/charges/mis) into modules."
+  ],
+  "updated_files": ["/app/backend/tests/backend_test.py"],
+  "success_rate": {"backend": "97% (36/37)", "frontend": "95%"},
+  "seed_data_creation": "Temporary TEST_ properties (TEST_Tower_*, TEST_Tips_*, TEST_Reset_*) created and deleted by pytest fixtures. One UI tanker (supplier QA_TEST_SUPPLIER) was created on the demo property and deleted afterwards; demo totals re-verified as 3950 / 0.1646 / recurring 6500 / billable 19050.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@societyhub.com / admin123 (super admin), tenant1@societyhub.com / demo123 (resident) — /app/memory/test_credentials.md present and valid",
+  "context_for_next_testing_agent": "backend_test.py now encodes the post-fix arithmetic: tanker 6000+2000L @1600 lorry +100 tips -> cpl 0.2125, statement total_water_spend 1700, recurring 9700; TestTipsInWaterCost covers the reported case (1200+100 -> 1300 / 0.1625). Iteration_1's resident-MIS-scope test was replaced by test_resident_mis_export_forbidden (403, admin-only now). CORS test asserts on a real GET with Origin header because the edge proxy answers OPTIONS. Month-reset is exercised only on an isolated throwaway property; UI month reset was intentionally NOT run on demo data.",
+  "rca_of_the_issue": "Reported bug is fixed: create_tanker now stores total_cost = amount + tips_amount and cost_per_litre = total_cost/total_qty, and compute_statement folds total_tips into total_spend before computing avg_cost while no longer adding tips to recurring_total. Verified no double counting (billable_total == water + recurring + maintenance) and that the tip payer keeps a single 100 contribution credit. Residual issue: legacy tanker documents seeded before the fix still hold lorry-only cost_per_litre, and the Water table displays that stored value, so the per-row Rs./L is inconsistent with the per-row Total cost for old data."
+}

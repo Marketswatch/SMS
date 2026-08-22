@@ -108,7 +108,7 @@ export default function Charges() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <Stat testId="charges-stat-recurring" label="Recurring total" value={money(t?.recurring_total)} sub={`${money(t?.recurring_share)} / flat`} />
         <Stat testId="charges-stat-adhoc" label="One-time total" value={money(t?.maintenance_total)} sub={`${money(t?.maintenance_share)} / flat`} />
-        <Stat testId="charges-stat-tips" label="Tanker tips" value={money(t?.total_tips)} sub="Included in recurring split" />
+        <Stat testId="charges-stat-tips" label="Tanker tips" value={money(t?.total_tips)} sub="Part of water cost, not recurring" />
         <Stat testId="charges-stat-flats" label="Split across" value={`${t?.flat_count || 0} flats`} sub="One equal share each" />
       </div>
 

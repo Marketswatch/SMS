@@ -42,7 +42,8 @@ export default function Water() {
   useEffect(() => { load(); setForm(blank); setMedia([]); /* eslint-disable-next-line */ }, [load]);
 
   const totalQty = Number(form.qty_sump || 0) + Number(form.qty_syntex || 0);
-  const perLitre = totalQty > 0 ? Number(form.amount || 0) / totalQty : 0;
+  const totalCost = Number(form.amount || 0) + Number(form.tips_amount || 0);
+  const perLitre = totalQty > 0 ? totalCost / totalQty : 0;
 
   const addTanker = async (e) => {
     e.preventDefault();
@@ -82,7 +83,7 @@ export default function Water() {
       <PageHeader title="Water" subtitle={`Tanker purchases & meter readings · ${monthLabel(month)}`} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <Stat testId="water-stat-purchased" label="Purchased" value={litres(t?.total_litres)} sub={money(t?.total_water_spend)} />
+        <Stat testId="water-stat-purchased" label="Purchased" value={litres(t?.total_litres)} sub={`${money(t?.total_water_spend)} incl. tips`} />
         <Stat testId="water-stat-avg" label="Avg cost / L" value={`₹${num(t?.avg_cost_per_litre, 4)}`} sub="Weighted average" />
         <Stat testId="water-stat-consumed" label="Consumed" value={litres(t?.total_consumed)} sub="All flats" />
         <Stat testId="water-stat-reserve" label="Reserve" value={litres(t?.reserve_litres)}
@@ -124,13 +125,13 @@ export default function Water() {
                     <span className="mono font-semibold" data-testid="tanker-total-qty">{litres(totalQty)}</span>
                   </div>
                   <div>
-                    <Label className="label-caps">Amount paid</Label>
+                    <Label className="label-caps">Lorry amount paid</Label>
                     <Input type="number" inputMode="decimal" step="any" className="mt-2 h-12 mono text-lg" required data-testid="tanker-amount-input"
                            value={form.amount} onChange={(e) => setForm({ ...form, amount: e.target.value })} />
                   </div>
                   <div className="bg-slate-50 border border-slate-200 rounded-md px-3 py-2 flex justify-between text-sm">
-                    <span className="text-slate-500">Cost per litre</span>
-                    <span className="mono font-semibold" data-testid="tanker-per-litre">₹{num(perLitre, 4)}</span>
+                    <span className="text-slate-500">Lorry + tips</span>
+                    <span className="mono font-semibold" data-testid="tanker-total-cost">{money(totalCost)}</span>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
@@ -150,7 +151,7 @@ export default function Water() {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
-                      <Label className="label-caps">Tips amount</Label>
+                      <Label className="label-caps">Tips paid to crew</Label>
                       <Input type="number" inputMode="decimal" step="any" className="mt-2 h-11 mono" data-testid="tanker-tips-input"
                              value={form.tips_amount} onChange={(e) => setForm({ ...form, tips_amount: e.target.value })} />
                     </div>
@@ -161,6 +162,10 @@ export default function Water() {
                         <SelectContent>{flats.map((f) => <SelectItem key={f.id} value={f.id}>{f.number}</SelectItem>)}</SelectContent>
                       </Select>
                     </div>
+                  </div>
+                  <div className="bg-slate-50 border border-slate-200 rounded-md px-3 py-2 flex justify-between text-sm">
+                    <span className="text-slate-500">Cost per litre <span className="text-slate-400">(incl. tips)</span></span>
+                    <span className="mono font-semibold" data-testid="tanker-per-litre">₹{num(perLitre, 4)}</span>
                   </div>
                   <div>
                     <Label className="label-caps">Supplier / notes</Label>
@@ -184,8 +189,9 @@ export default function Water() {
                   <table className="data-table">
                     <thead>
                       <tr><th>Date</th><th className="text-right">Sump</th><th className="text-right">Syntex</th>
-                        <th className="text-right">Total</th><th className="text-right">Amount</th>
-                        <th className="text-right">₹/L</th><th>Paid by</th><th className="text-right">Tips</th>
+                        <th className="text-right">Total</th><th className="text-right">Lorry</th>
+                        <th className="text-right">Tips</th><th className="text-right">Total cost</th>
+                        <th className="text-right">₹/L</th><th>Paid by</th>
                         <th>Media</th><th /></tr>
                     </thead>
                     <tbody>
@@ -196,9 +202,10 @@ export default function Water() {
                           <td className="num">{num(tk.qty_syntex, 0)}</td>
                           <td className="num font-semibold">{num(tk.total_qty, 0)}</td>
                           <td className="num">{money(tk.amount)}</td>
-                          <td className="num">{num(tk.cost_per_litre, 4)}</td>
-                          <td>{flatName(tk.payer_flat_id)} <span className="text-xs text-slate-400">({tk.payer_type})</span></td>
                           <td className="num">{money(tk.tips_amount)}</td>
+                          <td className="num font-semibold">{money((tk.amount || 0) + (tk.tips_amount || 0))}</td>
+                          <td className="num">{num((((tk.amount || 0) + (tk.tips_amount || 0)) / (tk.total_qty || 1)), 4)}</td>
+                          <td>{flatName(tk.payer_flat_id)} <span className="text-xs text-slate-400">({tk.payer_type})</span></td>
                           <td><MediaThumbs media={tk.media} /></td>
                           <td className="text-right">
                             {!locked && (

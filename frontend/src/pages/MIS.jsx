@@ -43,7 +43,7 @@ export default function MIS() {
       </PageHeader>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <Stat testId="mis-stat-water" label="Water spend" value={money(t?.total_water_spend)} sub={litres(t?.total_litres)} />
+        <Stat testId="mis-stat-water" label="Water spend (lorry + tips)" value={money(t?.total_water_spend)} sub={litres(t?.total_litres)} />
         <Stat testId="mis-stat-regular" label="Regular (recurring)" value={money(t?.recurring_total)} sub={`${money(t?.recurring_share)} / flat`} />
         <Stat testId="mis-stat-adhoc" label="Ad-hoc (repairs)" value={money(t?.maintenance_total)} sub={`${money(t?.maintenance_share)} / flat`} />
         <Stat testId="mis-stat-net" label="Net outstanding" value={money(t?.net_position)}
@@ -90,13 +90,13 @@ export default function MIS() {
           <dl className="divide-y divide-slate-100 text-sm">
             {[
               ["Total litres purchased", litres(t?.total_litres)],
-              ["Total water spend", money(t?.total_water_spend)],
+              ["Tanker tips (part of water cost)", money(t?.total_tips)],
+              ["Total water spend (lorry + tips)", money(t?.total_water_spend)],
               ["Average cost per litre", `₹${num(t?.avg_cost_per_litre, 4)}`],
               ["Total consumed (all meters)", litres(t?.total_consumed)],
               [t?.reserve_litres < 0 ? "Reserve drawdown" : "Reserve remaining", litres(t?.reserve_litres)],
               ["Reserve value", money(t?.reserve_value)],
               ["Reserve share per flat", money(t?.reserve_share)],
-              ["Tanker tips", money(t?.total_tips)],
             ].map(([k, v]) => (
               <div key={k} className="flex justify-between py-2">
                 <dt className="text-slate-600">{k}</dt><dd className="mono font-medium">{v}</dd>

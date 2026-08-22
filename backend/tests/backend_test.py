@@ -96,12 +96,11 @@ class TestAuth:
         assert 429 in codes, f"no lockout observed: {codes}"
 
     def test_cors_credentials_not_wildcard(self):
-        origin = BASE_URL
-        r = requests.options(f"{API}/auth/login", timeout=30, headers={
-            "Origin": origin, "Access-Control-Request-Method": "POST",
-            "Access-Control-Request-Headers": "content-type"})
+        """Preflight OPTIONS is answered by the edge proxy in preview, so assert on a
+        real request carrying an Origin header (that reaches the app CORS middleware)."""
+        r = requests.get(f"{API}/", timeout=30, headers={"Origin": BASE_URL})
+        assert r.headers.get("access-control-allow-credentials") == "true", dict(r.headers)
         allow_origin = r.headers.get("access-control-allow-origin")
-        assert r.headers.get("access-control-allow-credentials") == "true"
         assert allow_origin != "*", "wildcard origin with credentials breaks browser cookies"
 
 
@@ -247,7 +246,9 @@ class TestWaterAndEngine:
         assert r.status_code == 200, r.text
         d = r.json()
         assert d["total_qty"] == 8000
-        assert d["cost_per_litre"] == 0.2
+        # BUG FIX: lorry(1600) + tips(100) = 1700 -> 1700/8000 = 0.2125
+        assert d["total_cost"] == 1700, d
+        assert d["cost_per_litre"] == 0.2125, d
         got = admin.get(f"{API}/tankers", params={"property_id": prop, "month": month}, timeout=30).json()
         row = [x for x in got if x["id"] == d["id"]][0]
         assert row["tips_amount"] == 100 and row["tips_payer_flat_id"] == flats[1]["id"]
@@ -304,23 +305,28 @@ class TestWaterAndEngine:
     def test_statement_math(self, admin, prop, month, flats, meters):
         st = admin.get(f"{API}/statement", params={"property_id": prop, "month": month}, timeout=30).json()
         t = st["totals"]
-        # purchased 8000 L / 1600  -> avg 0.2 ; consumed 2000 + 1000 = 3000
+        # purchased 8000 L / (1600 lorry + 100 tips) -> avg 0.2125 ; consumed 2000 + 1000 = 3000
         assert t["total_litres"] == 8000
-        assert t["total_water_spend"] == 1600
-        assert t["avg_cost_per_litre"] == 0.2
+        assert t["total_water_spend"] == 1700
+        assert t["total_tips"] == 100
+        assert t["avg_cost_per_litre"] == 0.2125
         assert t["total_consumed"] == 3000
         assert t["reserve_litres"] == 5000
-        assert t["reserve_value"] == 1000
-        assert t["reserve_share"] == 500
-        # recurring = defaults(5000+1200+3000) + manual 500 + tips 100 = 9800 ; /2 = 4900
-        assert t["recurring_total"] == 9800, st["recurring_items"]
-        assert t["recurring_share"] == 4900
+        assert t["reserve_value"] == 1062.5
+        assert t["reserve_share"] == 531.25
+        # recurring = defaults(5000+1200+3000) + manual 500 = 9700 (tips NOT included) ; /2 = 4850
+        assert t["recurring_total"] == 9700, st["recurring_items"]
+        assert t["recurring_share"] == 4850
+        assert "tips" not in [c["charge_type"] for c in st["recurring_items"]]
         assert t["maintenance_total"] == 2000 and t["maintenance_share"] == 1000
+        # no double counting: billed total == water + recurring + maintenance
+        assert abs(t["billable_total"] - (t["total_water_spend"] + t["recurring_total"]
+                                         + t["maintenance_total"])) < 0.05, t
         rows = {r["flat_number"]: r for r in st["rows"]}
         a, b = rows["101"], rows["102"]
-        assert a["consumption"] == 2000 and a["water_own_cost"] == 400
-        assert a["water_cost"] == 900
-        assert a["base_cost"] == round(900 + 4900 + 1000, 2)
+        assert a["consumption"] == 2000 and a["water_own_cost"] == 425
+        assert a["water_cost"] == 956.25
+        assert a["base_cost"] == round(956.25 + 4850 + 1000, 2)
         # contributions: flat101 fronted tanker 1600 ; flat102 tips 100 + cleaning 500
         assert a["contributions"] == 1600
         assert b["contributions"] == 600
@@ -354,9 +360,103 @@ class TestWaterAndEngine:
         assert st["totals"]["reserve_litres"] < 0
         assert st["totals"]["reserve_share"] < 0
         big = [r for r in st["rows"] if r["consumption"] == 9000][0]
-        assert big["water_own_cost"] == 1800  # still billed at avg cost
+        assert big["water_own_cost"] == 1912.5  # still billed at avg cost (incl. tips)
         payload["readings"][0]["closing"] = 2100
         admin.put(f"{API}/readings", json=payload, timeout=30)
+
+
+# ------------------------------------------------- BUG FIX: tips are part of the lorry (water) cost
+class TestTipsInWaterCost:
+    """User-reported bug: lorry amount + tips must together form the per-litre cost;
+    tips must NOT be split as a separate recurring charge."""
+
+    @pytest.fixture(scope="class")
+    def env(self, admin):
+        pid = admin.post(f"{API}/properties", json={"name": f"TEST_Tips_{uuid.uuid4().hex[:6]}",
+                                                    "address": "QA tips"}, timeout=30).json()["id"]
+        month = "2026-04"
+        fl = []
+        for n in ("A1", "A2"):
+            f = admin.post(f"{API}/flats", json={"property_id": pid, "number": n,
+                                                 "owner_name": f"O {n}", "tenant_name": f"T {n}"}, timeout=30).json()
+            m = admin.post(f"{API}/meters", json={"property_id": pid, "flat_id": f["id"],
+                                                  "label": f"M {n}", "opening": 0}, timeout=30).json()
+            fl.append((f, m))
+        yield {"pid": pid, "month": month, "flats": [x[0] for x in fl], "meters": [x[1] for x in fl]}
+        admin.delete(f"{API}/properties/{pid}", timeout=30)
+
+    def test_per_tanker_cost_includes_tips(self, admin, env):
+        r = admin.post(f"{API}/tankers", json={"property_id": env["pid"], "month": env["month"],
+                                               "date": f"{env['month']}-03", "qty_sump": 6000,
+                                               "qty_syntex": 2000, "amount": 1200,
+                                               "payer_flat_id": env["flats"][0]["id"], "payer_type": "owner",
+                                               "tips_amount": 100,
+                                               "tips_payer_flat_id": env["flats"][1]["id"],
+                                               "tips_payer_type": "tenant"}, timeout=30)
+        assert r.status_code == 200, r.text
+        d = r.json()
+        assert d["total_qty"] == 8000
+        assert d["total_cost"] == 1300, d
+        assert d["cost_per_litre"] == 0.1625, d
+        # persisted
+        row = [x for x in admin.get(f"{API}/tankers", params={"property_id": env["pid"],
+                                                              "month": env["month"]}, timeout=30).json()
+               if x["id"] == d["id"]][0]
+        assert row["total_cost"] == 1300 and row["cost_per_litre"] == 0.1625
+
+    def test_statement_totals_and_no_double_count(self, admin, env):
+        # readings so all purchased water is consumed
+        admin.put(f"{API}/readings", json={"property_id": env["pid"], "month": env["month"], "readings": [
+            {"meter_id": env["meters"][0]["id"], "opening": 0, "closing": 5000},
+            {"meter_id": env["meters"][1]["id"], "opening": 0, "closing": 3000}]}, timeout=30)
+        # a real recurring charge
+        assert admin.post(f"{API}/charges", json={"property_id": env["pid"], "month": env["month"],
+                                                  "charge_type": "security", "description": "TEST guard",
+                                                  "amount": 2000, "payer_type": "owner",
+                                                  "date": f"{env['month']}-04"}, timeout=30).status_code == 200
+        st = admin.get(f"{API}/statement", params={"property_id": env["pid"],
+                                                   "month": env["month"]}, timeout=30).json()
+        t = st["totals"]
+        assert t["total_water_spend"] == 1300
+        assert t["total_tips"] == 100
+        assert t["avg_cost_per_litre"] == 0.1625
+        # recurring holds ONLY the security charge — no tips
+        assert t["recurring_total"] == 2000, st["recurring_items"]
+        assert t["recurring_share"] == 1000
+        assert all(c["charge_type"] != "tips" for c in st["recurring_items"])
+        # invariant: tips counted exactly once
+        assert abs(t["billable_total"] - (1300 + 2000 + t["maintenance_total"])) < 0.05, t
+        rows = {r["flat_number"]: r for r in st["rows"]}
+        assert rows["A1"]["water_own_cost"] == 812.5
+        assert rows["A2"]["water_own_cost"] == 487.5
+        # contribution credit for the tip payer unchanged
+        assert rows["A2"]["contributions"] == 100, rows["A2"]["contribution_detail"]
+        assert any(c["source"] == "tips" and c["amount"] == 100
+                   for c in rows["A2"]["contribution_detail"])
+        assert rows["A1"]["contributions"] == 1200
+        assert rows["A2"]["net"] == round(rows["A2"]["base_cost"] - 100, 2)
+
+    def test_demo_property_expected_figures(self, admin):
+        props = admin.get(f"{API}/properties", timeout=30).json()
+        demo = [p for p in props if p["name"] == "Sunrise Residency"]
+        assert demo, "demo property missing"
+        pid = demo[0]["id"]
+        month = admin.get(f"{API}/periods", params={"property_id": pid}, timeout=30).json()[0]["month"]
+        t = admin.get(f"{API}/statement", params={"property_id": pid, "month": month},
+                      timeout=30).json()["totals"]
+        assert t["total_water_spend"] == 3950, t
+        # 3950 / 24000 = 0.164583, engine reports 4-dp rounded
+        assert t["avg_cost_per_litre"] == 0.1646, t
+        assert t["recurring_total"] == 6500, t
+        assert abs(t["billable_total"] - (t["total_water_spend"] + t["recurring_total"]
+                                          + t["maintenance_total"])) < 0.05, t
+
+    def test_csv_labels_mention_tips_in_water(self, admin, env):
+        r = admin.get(f"{API}/mis/export", params={"property_id": env["pid"], "month": env["month"],
+                                                   "format": "csv"}, timeout=60)
+        assert r.status_code == 200
+        low = r.text.lower()
+        assert "lorry" in low and "tips" in low, r.text[:400]
 
 
 class TestMISExport:
@@ -440,13 +540,12 @@ class TestRoleRestrictions:
         r5 = resident.get(f"{API}/users", timeout=30)
         assert [r.status_code for r in (r1, r2, r3, r4, r5)] == [403] * 5
 
-    def test_resident_mis_export_scope(self, resident, demo_pid):
+    def test_resident_mis_export_forbidden(self, resident, demo_pid):
+        """MIS export is admin-only after iteration_1 fix."""
         month = resident.get(f"{API}/periods", params={"property_id": demo_pid}, timeout=30).json()[-1]["month"]
         r = resident.get(f"{API}/mis/export", params={"property_id": demo_pid, "month": month,
                                                       "format": "csv"}, timeout=60)
-        assert r.status_code == 200
-        others = [n for n in ("102", "201", "202") if f"\n{n}," in r.text]
-        assert not others, f"resident CSV export leaks other flats: {others}"
+        assert r.status_code == 403, r.status_code
 
 
 # ------------------------------------------------------------------ destructive: month reset (isolated property)

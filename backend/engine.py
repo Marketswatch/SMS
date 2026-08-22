@@ -3,7 +3,7 @@
 All money rounded to 2 decimals at presentation boundaries only.
 """
 
-RECURRING_TYPES = ["cleaning", "sweeper", "security", "electricity", "misc", "tips"]
+RECURRING_TYPES = ["cleaning", "sweeper", "security", "electricity", "misc"]
 ADHOC_TYPES = ["maintenance"]
 
 
@@ -21,8 +21,9 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
 
     # --- water purchased ---
     total_litres = sum(float(t.get("qty_sump", 0)) + float(t.get("qty_syntex", 0)) for t in tankers)
-    total_spend = sum(float(t.get("amount", 0)) for t in tankers)
     total_tips = sum(float(t.get("tips_amount", 0) or 0) for t in tankers)
+    # A tanker's true cost = lorry amount + tips paid to the crew. Both form the per-litre price.
+    total_spend = sum(float(t.get("amount", 0)) for t in tankers) + total_tips
     avg_cost = (total_spend / total_litres) if total_litres > 0 else 0.0
 
     # --- consumption ---
@@ -71,7 +72,7 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
     # --- charges split ---
     recurring_items = [c for c in charges if c.get("charge_type") in RECURRING_TYPES]
     adhoc_items = [c for c in charges if c.get("charge_type") in ADHOC_TYPES]
-    recurring_total = sum(float(c.get("amount", 0)) for c in recurring_items) + total_tips
+    recurring_total = sum(float(c.get("amount", 0)) for c in recurring_items)
     adhoc_total = sum(float(c.get("amount", 0)) for c in adhoc_items)
     recurring_share = recurring_total / n
     adhoc_share = adhoc_total / n

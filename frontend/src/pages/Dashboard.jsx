@@ -65,7 +65,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat testId="stat-purchased" label="Water purchased" value={litres(t?.total_litres)}
-              sub={`${money(t?.total_water_spend)} spend`} />
+              sub={`${money(t?.total_water_spend)} spend (lorry + tips)`} />
         <Stat testId="stat-avg-cost" label="Avg cost / litre" value={`₹${num(t?.avg_cost_per_litre, 4)}`}
               sub="Monthly weighted average" />
         <Stat testId="stat-consumed" label="Consumed" value={litres(t?.total_consumed)}

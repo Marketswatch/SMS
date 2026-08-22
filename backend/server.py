@@ -367,7 +367,8 @@ async def create_tanker(body: TankerIn, user: dict = Depends(admin_user)):
     await ensure_period(body.property_id, body.month)
     doc = body.model_dump()
     doc["total_qty"] = doc["qty_sump"] + doc["qty_syntex"]
-    doc["cost_per_litre"] = round(doc["amount"] / doc["total_qty"], 4) if doc["total_qty"] else 0
+    doc["total_cost"] = doc["amount"] + (doc.get("tips_amount") or 0)
+    doc["cost_per_litre"] = round(doc["total_cost"] / doc["total_qty"], 4) if doc["total_qty"] else 0
     doc["created_at"] = datetime.now(timezone.utc)
     doc["created_by"] = user["id"]
     res = await db.tankers.insert_one(doc)
@@ -613,8 +614,8 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
         w = csv.writer(buf)
         w.writerow([f"SocietyHub MIS — {stmt['property']['name']} — {month}"])
         w.writerow([])
-        w.writerow(["Water purchased (L)", t["total_litres"], "Water spend", t["total_water_spend"],
-                    "Avg cost/L", t["avg_cost_per_litre"]])
+        w.writerow(["Water purchased (L)", t["total_litres"], "Water spend (lorry+tips)", t["total_water_spend"],
+                    "Avg cost/L", t["avg_cost_per_litre"], "of which tips", t["total_tips"]])
         w.writerow(["Consumed (L)", t["total_consumed"], "Reserve (L)", t["reserve_litres"],
                     "Reserve value", t["reserve_value"]])
         w.writerow(["Recurring total", t["recurring_total"], "Maintenance total", t["maintenance_total"]])
@@ -644,7 +645,7 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
     story = [Paragraph(f"SocietyHub MIS — {stmt['property']['name']}", styles["Title"]),
              Paragraph(f"Period: {month} &nbsp;&nbsp; Status: {stmt['status']}", styles["Normal"]),
              Spacer(1, 10)]
-    summary = [["Water purchased (L)", t["total_litres"], "Water spend", t["total_water_spend"],
+    summary = [["Water purchased (L)", t["total_litres"], "Water spend (lorry + tips)", t["total_water_spend"],
                 "Avg cost / L", t["avg_cost_per_litre"]],
                ["Consumed (L)", t["total_consumed"], "Reserve (L)", t["reserve_litres"],
                 "Reserve value", t["reserve_value"]],
@@ -782,7 +783,8 @@ async def demo_seed(user: dict = Depends(admin_user)):
             (f"{month}-19", 6000, 2000, 1200, flat_ids[0])]):
         await db.tankers.insert_one({"property_id": pid, "month": month, "date": d,
                                      "qty_sump": sump, "qty_syntex": syn, "total_qty": sump + syn,
-                                     "amount": amt, "cost_per_litre": round(amt / (sump + syn), 4),
+                                     "amount": amt, "cost_per_litre": round((amt + 100) / (sump + syn), 4),
+                                     "total_cost": amt + 100,
                                      "payer_flat_id": payer, "payer_type": "owner",
                                      "tips_amount": 100, "tips_payer_flat_id": payer,
                                      "tips_payer_type": "tenant", "supplier": "Krishna Water Supply",
