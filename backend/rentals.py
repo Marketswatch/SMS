@@ -93,6 +93,7 @@ class BillIn(BaseModel):
     rent: float = 0
     maintenance: float = 0
     maintenance_payable: Optional[float] = None   # to the building; defaults to `maintenance`
+    carry_forward: float = 0                      # previous month's dues (+) or advance (-)
     items: List[BillItem] = []
     notes: str = ""
 
@@ -105,6 +106,7 @@ class PaymentIn(BaseModel):
     maintenance_paid: float = 0
     adhoc_paid: float = 0
     mode: str = "upi"
+    reference: str = ""
     notes: str = ""
 
 
@@ -127,12 +129,21 @@ class PayoutIn(BaseModel):
     date: str
     category: str = "Maintenance"
     note: str = ""
+    mode: str = "bank"
+    reference: str = ""
     is_credit: bool = False     # a bill I paid for the building -> credited against my payable
     media: List[Dict[str, Any]] = []
 
 
 class CategoryIn(BaseModel):
     name: str
+
+
+def require_reference(mode: str, reference: str):
+    """Anything other than cash must carry a reference number."""
+    if str(mode).lower() != "cash" and not str(reference or "").strip():
+        raise HTTPException(status_code=400,
+                            detail=f"A reference number is required for {mode or 'non-cash'} payments")
 
 
 def make_router(db):
@@ -170,13 +181,11 @@ def make_router(db):
     @router.get("/categories")
     async def list_categories(user: dict = Depends(admin_user)):
         await db.rental_categories.create_index("name", unique=True)
+        for n in DEFAULT_CATEGORIES:
+            await db.rental_categories.update_one({"name": n},
+                                                  {"$setOnInsert": {"name": n, "created_at": datetime.now(timezone.utc)}},
+                                                  upsert=True)
         docs = await db.rental_categories.find().sort("name", 1).to_list(300)
-        if not docs:
-            for n in DEFAULT_CATEGORIES:
-                await db.rental_categories.update_one({"name": n},
-                                                      {"$setOnInsert": {"name": n, "created_at": datetime.now(timezone.utc)}},
-                                                      upsert=True)
-            docs = await db.rental_categories.find().sort("name", 1).to_list(300)
         return [ser(d) for d in docs]
 
     @router.post("/categories")
@@ -265,11 +274,42 @@ def make_router(db):
         tenant_paid = sum(float(i.get("amount", 0)) for i in items if i.get("direction") == "tenant_paid")
         rent = float(bill.get("rent", 0) or 0)
         maint = float(bill.get("maintenance", 0) or 0)
+        carry = float(bill.get("carry_forward", 0) or 0)
         return {
-            "rent": r2(rent), "maintenance": r2(maint),
+            "rent": r2(rent), "maintenance": r2(maint), "carry_forward": r2(carry),
             "adhoc_collect": r2(adhoc_collect), "tenant_paid_on_my_behalf": r2(tenant_paid),
-            "total_to_collect": r2(rent + maint + adhoc_collect - tenant_paid),
+            "total_to_collect": r2(rent + maint + adhoc_collect - tenant_paid + carry),
         }
+
+    def prev_month(month: str) -> str:
+        y, m = int(month[:4]), int(month[5:7])
+        return f"{y - 1:04d}-12" if m == 1 else f"{y:04d}-{m - 1:02d}"
+
+    def existed_in_month(unit: dict, month: str) -> bool:
+        """Was this property already on the books in `month`? Avoids inventing dues for new entries."""
+        ls = unit.get("lease_start") or ""
+        if ls:
+            return ls[:7] <= month
+        created = unit.get("created_at")
+        return bool(created) and str(created)[:7] <= month
+
+    async def prev_outstanding(unit: dict, month: str) -> float:
+        """Last month's billed total minus what was collected. + = dues, - = advance."""
+        unit_id = str(unit["_id"])
+        pm = prev_month(month)
+        bill = await db.rental_bills.find_one({"unit_id": unit_id, "month": pm})
+        if bill:
+            billed = bill_totals(bill)["total_to_collect"]
+        elif unit_state(unit, pm) == "active" and existed_in_month(unit, pm):
+            # no bill was saved last month — fall back to the property master
+            billed = bill_totals({"rent": unit.get("rent_amount", 0),
+                                  "maintenance": unit.get("maintenance_amount", 0)})["total_to_collect"]
+        else:
+            return 0.0
+        pays = await db.rent_payments.find({"unit_id": unit_id, "month": pm}).to_list(500)
+        got = sum(float(p.get("rent_paid", 0) or 0) + float(p.get("maintenance_paid", 0) or 0)
+                  + float(p.get("adhoc_paid", 0) or 0) for p in pays)
+        return r2(billed - got)
 
     async def get_or_draft_bill(unit: dict, month: str, cache: Optional[dict] = None) -> dict:
         uid = str(unit["_id"])
@@ -280,7 +320,8 @@ def make_router(db):
             return b
         return {"id": None, "is_draft": True, "unit_id": uid, "month": month,
                 "rent": r2(unit.get("rent_amount", 0)), "maintenance": r2(unit.get("maintenance_amount", 0)),
-                "maintenance_payable": None, "items": [], "notes": ""}
+                "maintenance_payable": None, "carry_forward": await prev_outstanding(unit, month),
+                "items": [], "notes": ""}
 
     @router.get("/bills")
     async def list_bills(month: str, user: dict = Depends(admin_user)):
@@ -318,6 +359,7 @@ def make_router(db):
     @router.post("/payments")
     async def create_payment(body: PaymentIn, user: dict = Depends(admin_user)):
         valid_month(body.month)
+        require_reference(body.mode, body.reference)
         await require_unit(body.unit_id)
         doc = body.model_dump()
         doc["total"] = r2(body.rent_paid + body.maintenance_paid + body.adhoc_paid)
@@ -335,6 +377,7 @@ def make_router(db):
     @router.put("/payments/{pid}")
     async def update_payment(pid: str, body: PaymentIn, user: dict = Depends(admin_user)):
         valid_month(body.month)
+        require_reference(body.mode, body.reference)
         await require_unit(body.unit_id)
         doc = body.model_dump()
         doc["total"] = r2(body.rent_paid + body.maintenance_paid + body.adhoc_paid)
@@ -376,6 +419,8 @@ def make_router(db):
     @router.post("/payouts")
     async def create_payout(body: PayoutIn, user: dict = Depends(admin_user)):
         valid_month(body.month)
+        if not body.is_credit:
+            require_reference(body.mode, body.reference)
         if body.unit_id:
             await require_unit(body.unit_id)
         doc = body.model_dump()
@@ -392,6 +437,8 @@ def make_router(db):
     @router.put("/payouts/{pid}")
     async def update_payout(pid: str, body: PayoutIn, user: dict = Depends(admin_user)):
         valid_month(body.month)
+        if not body.is_credit:
+            require_reference(body.mode, body.reference)
         if body.unit_id:
             await require_unit(body.unit_id)
         await db.rental_payouts.update_one({"_id": oid(pid)}, {"$set": body.model_dump()})
@@ -437,7 +484,7 @@ def make_router(db):
             bt = bill_totals(bill)
             if state != "active":
                 bt = {**bt, "rent": 0.0, "maintenance": 0.0, "adhoc_collect": 0.0,
-                      "tenant_paid_on_my_behalf": 0.0, "total_to_collect": 0.0}
+                      "tenant_paid_on_my_behalf": 0.0, "total_to_collect": bt["carry_forward"]}
 
             paid = [p for p in payments if p["unit_id"] == uid]
             rent_paid = sum(float(p.get("rent_paid", 0)) for p in paid)
@@ -496,13 +543,15 @@ def make_router(db):
                 "tenant_name": u.get("tenant_name") or "", "tenant_phone": u.get("tenant_phone") or "",
                 "rent_amount": r2(u.get("rent_amount", 0)),
                 "billed_rent": bt["rent"], "billed_maintenance": bt["maintenance"],
+                "carry_forward": bt["carry_forward"],
                 "adhoc_collect": bt["adhoc_collect"], "tenant_paid_on_my_behalf": bt["tenant_paid_on_my_behalf"],
                 "total_to_collect": bt["total_to_collect"], "items": items,
                 "rent_paid": r2(rent_paid), "maintenance_paid": r2(maint_paid), "adhoc_paid": r2(adhoc_paid),
                 "collected": r2(collected), "balance": r2(balance),
                 "rent_outstanding": r2(max(bt["rent"] - rent_paid, 0)),
                 "maintenance_outstanding": r2(max(bt["maintenance"] - maint_paid, 0)),
-                "adhoc_outstanding": r2(bt["adhoc_collect"] - bt["tenant_paid_on_my_behalf"] - adhoc_paid),
+                "adhoc_outstanding": r2(bt["adhoc_collect"] + bt["carry_forward"]
+                                        - bt["tenant_paid_on_my_behalf"] - adhoc_paid),
                 "deposit_held": r2(dep_in - dep_out), "deposit_expected": r2(u.get("deposit_amount", 0)),
                 "maintenance_payable_to_building": r2(maint_payable),
                 "adhoc_payable_to_building": r2(adhoc_payable),
@@ -544,6 +593,7 @@ def make_router(db):
             "billed_rent": r2(sum(r["billed_rent"] for r in rows)),
             "billed_maintenance": r2(sum(r["billed_maintenance"] for r in rows)),
             "adhoc_collect": r2(sum(r["adhoc_collect"] for r in rows)),
+            "carry_forward": r2(sum(r["carry_forward"] for r in rows)),
             "tenant_paid_on_my_behalf": r2(sum(r["tenant_paid_on_my_behalf"] for r in rows)),
             "total_to_collect": r2(sum(r["total_to_collect"] for r in rows)),
             "rent_paid": r2(sum(r["rent_paid"] for r in rows)),

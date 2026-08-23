@@ -231,7 +231,7 @@ class TestCollections:
         r = admin.post(f"{API}/rentals/payments", json={
             "unit_id": qa_unit["id"], "month": MONTH, "date": f"{MONTH}-06",
             "rent_paid": 40000, "maintenance_paid": 2500, "adhoc_paid": 0,
-            "mode": "upi", "notes": "QA collection"}, timeout=30)
+            "mode": "upi", "reference": "QA-UPI-1", "notes": "QA collection"}, timeout=30)
         assert r.status_code == 200, r.text[:300]
         p = r.json()
         assert p["total"] == 42500
@@ -272,7 +272,8 @@ class TestCollections:
         # re-create for downstream building/overview tests
         r = admin.post(f"{API}/rentals/payments", json={
             "unit_id": qa_unit["id"], "month": MONTH, "date": f"{MONTH}-06",
-            "rent_paid": 40000, "maintenance_paid": 2500, "adhoc_paid": 0, "mode": "upi"}, timeout=30)
+            "rent_paid": 40000, "maintenance_paid": 2500, "adhoc_paid": 0, "mode": "upi",
+            "reference": "QA-UPI-2"}, timeout=30)
         TestCollections.payment_id = r.json()["id"]
 
     def test_cleanup_payment(self, admin):
@@ -326,7 +327,8 @@ class TestPayouts:
     def test_payout_and_credit_payout(self, admin):
         r = admin.post(f"{API}/rentals/payouts", json={
             "building_name": QA_BUILDING, "month": MONTH, "amount": 2000,
-            "date": f"{MONTH}-10", "category": "Maintenance", "note": "QA payout"}, timeout=30)
+            "date": f"{MONTH}-10", "category": "Maintenance", "note": "QA payout",
+            "mode": "bank", "reference": "QA-NEFT-1"}, timeout=30)
         assert r.status_code == 200
         TestPayouts.ids.append(r.json()["id"])
         r = admin.post(f"{API}/rentals/payouts", json={

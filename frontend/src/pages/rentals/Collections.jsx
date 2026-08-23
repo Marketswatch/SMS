@@ -12,9 +12,9 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { money, monthLabel, plainAmt } from "@/lib/format";
 import { openWhatsApp } from "@/lib/notify";
+import { MODES, modeLabel } from "@/lib/modes";
 
-const DEP_KINDS = [
-  { value: "deposit", label: "Deposit received" },
+const DEP_KINDS = [  { value: "deposit", label: "Deposit received" },
   { value: "deposit_refund", label: "Deposit refunded" },
   { value: "deposit_deduction", label: "Deposit deduction" },
 ];
@@ -25,7 +25,7 @@ export default function Collections() {
   const { stmt } = useRentStatement(rentMonth, tick);
   const [payments, setPayments] = useState([]);
   const [deposits, setDeposits] = useState([]);
-  const blank = { unit_id: "", date: `${rentMonth}-01`, rent_paid: "", maintenance_paid: "", adhoc_paid: "", mode: "upi", notes: "" };
+  const blank = { unit_id: "", date: `${rentMonth}-01`, rent_paid: "", maintenance_paid: "", adhoc_paid: "", mode: "upi", reference: "", notes: "" };
   const [form, setForm] = useState(blank);
   const [dep, setDep] = useState({ unit_id: "", kind: "deposit", amount: "", date: `${rentMonth}-01`, mode: "bank", notes: "" });
 
@@ -60,10 +60,10 @@ export default function Collections() {
       await api.post("/rentals/payments", {
         unit_id: form.unit_id, month: rentMonth, date: form.date,
         rent_paid: Number(form.rent_paid || 0), maintenance_paid: Number(form.maintenance_paid || 0),
-        adhoc_paid: Number(form.adhoc_paid || 0), mode: form.mode, notes: form.notes,
+        adhoc_paid: Number(form.adhoc_paid || 0), mode: form.mode, reference: form.reference, notes: form.notes,
       });
       toast.success("Collection recorded and allocated");
-      setForm({ ...blank, unit_id: form.unit_id, date: form.date });
+      setForm({ ...blank, unit_id: form.unit_id, date: form.date, mode: form.mode });
       load(); setTick((t) => t + 1);
     } catch (err) { toast.error(errMsg(err)); }
   };
@@ -95,7 +95,7 @@ export default function Collections() {
   const shareReceipt = (p) => {
     const u = unitOf(p.unit_id);
     openWhatsApp(u?.tenant_phone, [`${u?.name} — ${monthLabel(p.month)}`,
-      `Received ${plainAmt(p.total)} on ${p.date} (${String(p.mode).toUpperCase()})`,
+      `Received ${plainAmt(p.total)} on ${p.date} (${modeLabel(p.mode)}${p.reference ? ` · ${p.reference}` : ""})`,
       `Rent ${plainAmt(p.rent_paid)} · Maintenance ${plainAmt(p.maintenance_paid)} · Ad-hoc ${plainAmt(p.adhoc_paid)}`,
       "Thank you."].join("\n"));
   };
@@ -168,12 +168,20 @@ export default function Collections() {
                   </div>
                   <div>
                     <Label className="label-caps">Mode</Label>
-                    <Select value={form.mode} onValueChange={(v) => setForm({ ...form, mode: v })}>
+                    <Select value={form.mode} onValueChange={(v) => setForm({ ...form, mode: v, reference: v === "cash" ? "" : form.reference })}>
                       <SelectTrigger className="mt-2 h-11" data-testid="collection-mode-select"><SelectValue /></SelectTrigger>
-                      <SelectContent>{["upi", "bank", "cash", "cheque"].map((m) => <SelectItem key={m} value={m} className="uppercase">{m}</SelectItem>)}</SelectContent>
+                      <SelectContent>{MODES.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
                 </div>
+                {form.mode !== "cash" && (
+                  <div>
+                    <Label className="label-caps">Reference / UPI txn no.</Label>
+                    <Input className="mt-2 h-11 mono" required data-testid="collection-reference-input"
+                           placeholder="UPI ref / bank txn no." value={form.reference}
+                           onChange={(e) => setForm({ ...form, reference: e.target.value })} />
+                  </div>
+                )}
                 <div>
                   <Label className="label-caps">Notes</Label>
                   <Input className="mt-2 h-11" data-testid="collection-notes-input"
@@ -218,7 +226,7 @@ export default function Collections() {
                     <table className="data-table">
                       <thead><tr><th>Date</th><th>Property</th><th className="text-right">Rent</th>
                         <th className="text-right">Maint.</th><th className="text-right">Ad-hoc</th>
-                        <th className="text-right">Total</th><th>Mode</th><th /></tr></thead>
+                        <th className="text-right">Total</th><th>Mode</th><th>Reference</th><th /></tr></thead>
                       <tbody>
                         {payments.map((p) => (
                           <tr key={p.id} data-testid={`payment-row-${p.id}`}>
@@ -228,7 +236,8 @@ export default function Collections() {
                             <td className="num">{money(p.maintenance_paid)}</td>
                             <td className="num">{money(p.adhoc_paid)}</td>
                             <td className="num font-semibold">{money(p.total)}</td>
-                            <td className="uppercase text-xs text-slate-500">{p.mode}</td>
+                            <td className="uppercase text-xs text-slate-500">{modeLabel(p.mode)}</td>
+                            <td className="mono text-xs text-slate-500" data-testid={`payment-reference-${p.id}`}>{p.reference || "—"}</td>
                             <td className="text-right">
                               <div className="flex justify-end gap-2">
                                 <button onClick={() => receipt(p)} data-testid={`receipt-btn-${p.id}`} title="Receipt PDF"

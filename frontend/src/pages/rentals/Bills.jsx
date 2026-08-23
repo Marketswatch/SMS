@@ -18,8 +18,9 @@ const calc = (b) => {
   const items = b.items || [];
   const collect = items.filter((i) => i.direction === "collect").reduce((s, i) => s + Number(i.amount || 0), 0);
   const paid = items.filter((i) => i.direction === "tenant_paid").reduce((s, i) => s + Number(i.amount || 0), 0);
-  const total = Number(b.rent || 0) + Number(b.maintenance || 0) + collect - paid;
-  return { collect, paid, total };
+  const carry = Number(b.carry_forward || 0);
+  const total = Number(b.rent || 0) + Number(b.maintenance || 0) + collect - paid + carry;
+  return { collect, paid, carry, total };
 };
 
 export default function Bills() {
@@ -40,6 +41,7 @@ export default function Bills() {
     setDraft({
       unit_id: b.unit_id, month: rentMonth, rent: String(b.rent ?? ""), maintenance: String(b.maintenance ?? ""),
       maintenance_payable: b.maintenance_payable === null || b.maintenance_payable === undefined ? "" : String(b.maintenance_payable),
+      carry_forward: String(b.carry_forward ?? 0),
       items: (b.items || []).map((i) => ({ ...i, amount: String(i.amount) })), notes: b.notes || "",
     });
   };
@@ -50,6 +52,7 @@ export default function Bills() {
         unit_id: draft.unit_id, month: rentMonth, rent: Number(draft.rent || 0),
         maintenance: Number(draft.maintenance || 0),
         maintenance_payable: draft.maintenance_payable === "" ? null : Number(draft.maintenance_payable),
+        carry_forward: Number(draft.carry_forward || 0),
         items: draft.items.map((i) => ({ ...i, amount: Number(i.amount || 0) })), notes: draft.notes,
       });
       toast.success("Bill saved");
@@ -73,6 +76,8 @@ export default function Bills() {
       .forEach((i) => lines.push(`${i.category}${i.note ? ` (${i.note})` : ""}: ${plainAmt(i.amount)}`));
     (b.items || []).filter((i) => i.direction === "tenant_paid")
       .forEach((i) => lines.push(`Less — paid by you${i.note ? ` (${i.note})` : ` (${i.category})`}: ${plainAmt(i.amount)}`));
+    if (t.carry_forward > 0) lines.push(`Previous dues: ${plainAmt(t.carry_forward)}`);
+    if (t.carry_forward < 0) lines.push(`Less — advance paid earlier: ${plainAmt(-t.carry_forward)}`);
     lines.push("", `Total payable: ${plainAmt(t.total_to_collect)}`);
     return lines.join("\n");
   };
@@ -80,17 +85,20 @@ export default function Bills() {
   const totals = bills.reduce((a, b) => ({
     rent: a.rent + b.totals.rent, maint: a.maint + b.totals.maintenance,
     adhoc: a.adhoc + b.totals.adhoc_collect, less: a.less + b.totals.tenant_paid_on_my_behalf,
+    carry: a.carry + b.totals.carry_forward,
     total: a.total + b.totals.total_to_collect,
-  }), { rent: 0, maint: 0, adhoc: 0, less: 0, total: 0 });
+  }), { rent: 0, maint: 0, adhoc: 0, less: 0, carry: 0, total: 0 });
 
   return (
     <div>
       <PageHeader title="Monthly Bills" subtitle={`What each tenant owes · ${monthLabel(rentMonth)}`} />
 
-      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+      <div className="grid grid-cols-2 lg:grid-cols-6 gap-4 mb-8">
         <Stat testId="bill-stat-rent" label="Rent" value={money(totals.rent)} />
         <Stat testId="bill-stat-maint" label="Maintenance" value={money(totals.maint)} />
         <Stat testId="bill-stat-adhoc" label="Ad-hoc to collect" value={money(totals.adhoc)} />
+        <Stat testId="bill-stat-carry" label="Previous dues" value={money(totals.carry)}
+              tone={totals.carry > 0 ? "negative" : "positive"} />
         <Stat testId="bill-stat-less" label="Paid by tenants for me" value={money(totals.less)} tone="warning" />
         <Stat testId="bill-stat-total" label="Total to collect" value={money(totals.total)} tone="positive" />
       </div>
@@ -148,6 +156,12 @@ export default function Bills() {
                     <span>Maintenance <b className="mono">{money(b.totals.maintenance)}</b></span>
                     <span>Ad-hoc <b className="mono">{money(b.totals.adhoc_collect)}</b></span>
                     <span className="text-amber-700">Less paid by tenant <b className="mono">{money(b.totals.tenant_paid_on_my_behalf)}</b></span>
+                    {!!b.totals.carry_forward && (
+                      <span className={b.totals.carry_forward > 0 ? "text-red-600" : "text-emerald-700"}>
+                        {b.totals.carry_forward > 0 ? "Previous dues" : "Advance credit"}{" "}
+                        <b className="mono">{money(Math.abs(b.totals.carry_forward))}</b>
+                      </span>
+                    )}
                     {(b.items || []).length > 0 && (
                       <span className="text-slate-500">{b.items.length} ad-hoc item{b.items.length > 1 ? "s" : ""}</span>
                     )}
@@ -172,6 +186,15 @@ export default function Bills() {
                                value={draft.maintenance_payable}
                                onChange={(e) => setDraft({ ...draft, maintenance_payable: e.target.value })} />
                         <p className="text-xs text-slate-500 mt-1">Blank = same as collected</p>
+                      </div>
+                      <div>
+                        <Label className="label-caps">Previous dues (carry forward)</Label>
+                        <Input type="number" inputMode="decimal" className="mt-2 h-11 mono" data-testid="bill-carry-input"
+                               value={draft.carry_forward}
+                               onChange={(e) => setDraft({ ...draft, carry_forward: e.target.value })} />
+                        <p className="text-xs text-slate-500 mt-1">
+                          Auto-filled from last month. Negative = advance already paid. Edit or zero it to waive.
+                        </p>
                       </div>
                     </div>
 
@@ -235,6 +258,7 @@ export default function Bills() {
                     <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-md px-4 py-3">
                       <span className="text-sm text-slate-600">
                         Rent + maintenance + ad-hoc {money(live.collect)} − paid by tenant {money(live.paid)}
+                        {live.carry ? ` ${live.carry > 0 ? "+" : "−"} previous ${money(Math.abs(live.carry))}` : ""}
                       </span>
                       <span className="mono text-lg font-semibold" data-testid="bill-live-total">{money(live.total)}</span>
                     </div>

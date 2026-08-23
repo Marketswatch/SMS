@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 7 — tested the rentals editable-bill / carry-forward / payment-mode+reference feature set end to end. Backend: new pytest suite (19 cases) covering bill edit+persist, carry-forward (dues + advance credit) via API, reference enforcement on collections & payouts, and regression on statement/export/receipt/auth. Frontend: Playwright flows on Bills (carry stat, editable inputs, live total, save+persist, WhatsApp message content), Collections (mode list, required reference, blocked submit, mode+reference columns, cash path, receipt PDF) and Payouts (mode list, reference required for non-cash non-credit, credit path, table columns), plus regression on Rent Roll / Reports / maintenance workspace. 18/19 backend cases pass; all frontend flows pass. Also fixed 8 stale iteration-6 tests that broke because of the new reference rule, and made the CORS test proxy-aware. Full suite now 116 passed / 1 failed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/rentals/payments/{pid}", "issue": "require_reference() is NOT called on update: a payment can be edited to mode=upi/bank with an empty reference and returns 200. Same gap in PUT /api/rentals/payouts/{pid}. POST correctly returns 400."},
+      {"endpoint": "GET /api/rentals/bills", "issue": "Carry-forward only reads the immediately previous month AND only if that month's bill was actually saved. If month M's bill was never saved (draft) but the tenant paid nothing, month M+1 draft shows carry_forward = 0, so genuinely unpaid dues silently disappear and dues older than one month never accumulate."},
+      {"endpoint": "GET /api/rentals/bills", "issue": "prev_outstanding() runs 2 extra queries per unit (N+1) inside the bills/statement loop; fine at current scale, will degrade with many properties."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Collections — record a collection", "issue": "After a successful submit the form resets mode back to the default 'upi' (blank state) even if the user had selected Cash, so the next entry silently switches to UPI and re-shows the required reference field. Payouts preserves the chosen mode; behaviour is inconsistent.", "affected_selectors": ["collection-mode-select"]},
+      {"flow": "Payouts — default category", "issue": "Category defaults to 'Common electricity' (cats[0]) instead of Maintenance even though a 'Maintenance' category exists; the preference effect appears to run against a stale/unsorted list.", "affected_selectors": ["payout-category"]}
+    ],
+    "design_issues": [
+      {"screen": "Collections / Payouts forms", "issues": ["Non-cash submit without a reference is blocked only by the native HTML5 'Please fill out this field' bubble — no in-app error text/toast, so the backend 400 message ('A reference number is required') is never surfaced. Acceptable but a styled inline error would match the rest of the app."]},
+      {"screen": "Bills card", "issues": ["WhatsApp / SMS buttons disappear while the card is in edit mode (only rendered in the read state) — user must save/cancel before sending; minor discoverability nit."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter7_carry_reference.py",
+    "/app/backend/tests/qa_iter7_seed.py",
+    "/app/test_reports/pytest/iter7_results.xml",
+    "/app/test_reports/pytest/iter7_full.xml"
+  ],
+  "action_items": [
+    "Call require_reference() in PUT /api/rentals/payments/{pid} and PUT /api/rentals/payouts/{pid} (currently only POST enforces it).",
+    "Decide/fix carry-forward for unsaved previous months: either auto-derive the previous month's billable total from the unit master when no bill doc exists, or accumulate the whole unpaid history instead of just M-1.",
+    "Collections: keep the user's selected payment mode after a successful submit (match Payouts behaviour).",
+    "Payouts: make the default category resolve to 'Maintenance' when present.",
+    "Optional: surface the backend 400 reference error as an inline/toast message instead of relying on the native HTML5 validation bubble."
+  ],
+  "critical_code_review_comments": [
+    "rentals.py is 745 lines (>700 guideline) — split bills/payments/payouts/statement/export into modules.",
+    "Carry-forward is snapshotted into the saved bill and never recomputed; if a payment for month M is recorded/deleted after month M+1's bill was saved, M+1's carry becomes stale. Intentional (editable) but should be documented in the UI copy.",
+    "Deposits still post a hard-coded mode 'bank' with no mode/reference input, inconsistent with the new Cash/UPI/Bank + reference policy applied to collections and payouts.",
+    "prev_outstanding() re-queries per unit inside list_bills/build_statement — batch the previous-month bills and payments in one query."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter7_carry_reference.py",
+    "/app/backend/tests/qa_iter7_seed.py",
+    "/app/backend/tests/test_iter6_rentals_rebuild.py",
+    "/app/backend/tests/backend_test.py"
+  ],
+  "success_rate": {"backend": "95% (18/19 new cases; 116/117 full suite)", "frontend": "100% of tested flows (Bills, Collections, Payouts, regression)"},
+  "seed_data_creation": "Temporary property 'TEST_UI Carry' (rent 10000, maint 500, tenant phone 9876500022) with a 2027-03 bill + partial 4000 cash payment to produce a 6000 carry into 2027-04; created via /app/backend/tests/qa_iter7_seed.py and removed afterwards ('clean'). API tests create/delete their own TEST_ units. Verified no leftover units/payments/payouts.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@societyhub.com / admin123 (from /app/memory/test_credentials.md) — valid, login + workspace switch work",
+  "context_for_next_testing_agent": "Verified working: bill-stat-carry, bill-edit/bill-rent-input/bill-maintenance-input/bill-payable-input/bill-carry-input, bill-live-total, bill-save persistence, WhatsApp message (contains Rent, Maintenance and 'Previous dues' lines, wa.me/91... link), Collections mode dropdown = exactly [Cash, UPI, Bank Transfer], required collection-reference-input (blocks submit), Mode+Reference columns (payment-reference-<id>), cash-without-reference success, receipt PDF download, Payouts mode/reference + credit path, and carry-forward API math (6000 dues, -2000 advance). Note the app has a /mode chooser after login (data-testid mode-rentals-btn) and rentMonth resets to the current month on any full page load — set the month via [data-testid=rent-month-switcher] AFTER navigating with in-app links. Only known open failure: TestCollectionReference::test_update_payment_enforces_reference (PUT payments/payouts skip require_reference). Auth playbook checks re-verified: bcrypt $2b$ hashes, httpOnly cookies, lockout after 5 fails, seed_admin updates existing admin, CORS_ORIGINS explicit (app returns explicit origin on 8001; the preview edge proxy rewrites it to '*', so backend_test's CORS test now skips in that case).",
+  "rca_of_the_issue": "Reference enforcement lives in require_reference() which is invoked only from create_payment() and create_payout(); the update handlers (update_payment/update_payout) validate the month and unit but never the mode/reference pair, so an existing cash entry can be flipped to UPI/bank with a blank reference. Carry-forward gap: prev_outstanding() returns 0.0 early when db.rental_bills has no document for month M-1, so an unbilled-but-unpaid month contributes nothing to the next month's draft."
+}

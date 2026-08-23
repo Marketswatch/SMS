@@ -13,6 +13,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { money, monthLabel } from "@/lib/format";
+import { MODES, modeLabel } from "@/lib/modes";
 
 export default function Payouts() {
   const { rentMonth, properties } = useApp();
@@ -21,12 +22,13 @@ export default function Payouts() {
   const { stmt } = useRentStatement(rentMonth, tick);
   const [rows, setRows] = useState([]);
   const blank = { building_property_id: "", building_name: "", unit_id: "", amount: "",
-                  date: `${rentMonth}-01`, category: "", note: "", is_credit: false };
+                  date: `${rentMonth}-01`, category: "", note: "", is_credit: false,
+                  mode: "bank", reference: "" };
   const [form, setForm] = useState(blank);
 
   useEffect(() => {
     if (!cats.length) return;
-    const pref = cats.find((c) => /^maintenance$/i.test(c.name)) || cats[0];
+    const pref = cats.find((c) => /maintenance/i.test(c.name)) || cats[0];
     setForm((f) => (f.category ? f : { ...f, category: pref.name }));
   }, [cats]);
   const [media, setMedia] = useState([]);
@@ -47,7 +49,7 @@ export default function Payouts() {
       });
       toast.success(form.is_credit ? "Credit recorded against the building" : "Payout recorded");
       setForm({ ...blank, building_property_id: form.building_property_id, building_name: form.building_name,
-                category: form.category, date: form.date });
+                category: form.category, date: form.date, mode: form.mode });
       setMedia([]); load(); setTick((t) => t + 1);
     } catch (err) { toast.error(errMsg(err)); }
   };
@@ -148,6 +150,22 @@ export default function Payouts() {
               <Input type="date" className="mt-2 h-11" data-testid="payout-date-input"
                      value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
             </div>
+            <div>
+              <Label className="label-caps">Payment mode</Label>
+              <Select value={form.mode}
+                      onValueChange={(v) => setForm({ ...form, mode: v, reference: v === "cash" ? "" : form.reference })}>
+                <SelectTrigger className="mt-2 h-11" data-testid="payout-mode-select"><SelectValue /></SelectTrigger>
+                <SelectContent>{MODES.map((m) => <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>)}</SelectContent>
+              </Select>
+            </div>
+            {form.mode !== "cash" && !form.is_credit && (
+              <div>
+                <Label className="label-caps">Reference / UPI txn no.</Label>
+                <Input className="mt-2 h-11 mono" required data-testid="payout-reference-input"
+                       placeholder="UPI ref / bank txn no." value={form.reference}
+                       onChange={(e) => setForm({ ...form, reference: e.target.value })} />
+              </div>
+            )}
             <div className="flex items-center justify-between border border-slate-200 rounded-md px-3 py-2.5">
               <div>
                 <div className="text-sm font-medium text-slate-800">This is a credit, not a payout</div>
@@ -175,7 +193,7 @@ export default function Payouts() {
             <div className="overflow-x-auto">
               <table className="data-table">
                 <thead><tr><th>Date</th><th>Building</th><th>Property</th><th>Category</th>
-                  <th className="text-right">Amount</th><th>Type</th><th>Bill</th><th /></tr></thead>
+                  <th className="text-right">Amount</th><th>Mode</th><th>Reference</th><th>Type</th><th>Bill</th><th /></tr></thead>
                 <tbody>
                   {rows.map((p) => (
                     <tr key={p.id} data-testid={`payout-row-${p.id}`}>
@@ -184,6 +202,8 @@ export default function Payouts() {
                       <td className="text-slate-500">{p.unit_id ? unitName(p.unit_id) : "—"}</td>
                       <td>{p.category}{p.note ? <span className="text-slate-400"> · {p.note}</span> : ""}</td>
                       <td className="num">{money(p.amount)}</td>
+                      <td className="text-xs text-slate-500">{p.is_credit ? "—" : modeLabel(p.mode)}</td>
+                      <td className="mono text-xs text-slate-500" data-testid={`payout-reference-${p.id}`}>{p.reference || "—"}</td>
                       <td>
                         <span className={`text-xs px-2 py-0.5 rounded border ${p.is_credit
                           ? "bg-amber-50 text-amber-800 border-amber-200" : "bg-emerald-50 text-emerald-700 border-emerald-200"}`}>
