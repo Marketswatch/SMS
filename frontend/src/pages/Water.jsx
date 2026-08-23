@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Truck, Trash2, Save, AlertTriangle } from "lucide-react";
+import { Truck, Trash2, Save, AlertTriangle, Pencil, X } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
 import { useApp } from "@/context/AppContext";
 import { PageHeader, Card, Stat, Empty } from "@/components/Common";
@@ -28,6 +28,7 @@ export default function Water() {
   };
   const [form, setForm] = useState(blank);
   const [media, setMedia] = useState([]);
+  const [editId, setEditId] = useState(null);
 
   const load = useCallback(async () => {
     if (!propertyId) return;
@@ -47,18 +48,32 @@ export default function Water() {
 
   const addTanker = async (e) => {
     e.preventDefault();
+    const payload = {
+      property_id: propertyId, month, date: form.date,
+      qty_sump: Number(form.qty_sump || 0), qty_syntex: Number(form.qty_syntex || 0),
+      amount: Number(form.amount || 0), payer_flat_id: form.payer_flat_id || null,
+      payer_type: form.payer_type, tips_amount: Number(form.tips_amount || 0),
+      tips_payer_flat_id: form.tips_payer_flat_id || form.payer_flat_id || null,
+      tips_payer_type: form.tips_payer_type, supplier: form.supplier, notes: form.notes, media,
+    };
     try {
-      await api.post("/tankers", {
-        property_id: propertyId, month, date: form.date,
-        qty_sump: Number(form.qty_sump || 0), qty_syntex: Number(form.qty_syntex || 0),
-        amount: Number(form.amount || 0), payer_flat_id: form.payer_flat_id || null,
-        payer_type: form.payer_type, tips_amount: Number(form.tips_amount || 0),
-        tips_payer_flat_id: form.tips_payer_flat_id || form.payer_flat_id || null,
-        tips_payer_type: form.tips_payer_type, supplier: form.supplier, notes: form.notes, media,
-      });
-      toast.success("Tanker purchase recorded");
-      setForm(blank); setMedia([]); load(); setTick((t) => t + 1);
+      if (editId) await api.put(`/tankers/${editId}`, payload);
+      else await api.post("/tankers", payload);
+      toast.success(editId ? "Tanker updated" : "Tanker purchase recorded");
+      setForm(blank); setMedia([]); setEditId(null); load(); setTick((t) => t + 1);
     } catch (err) { toast.error(errMsg(err)); }
+  };
+
+  const editTanker = (tk) => {
+    setEditId(tk.id);
+    setForm({
+      date: tk.date || `${month}-01`, qty_sump: String(tk.qty_sump ?? ""), qty_syntex: String(tk.qty_syntex ?? ""),
+      amount: String(tk.amount ?? ""), payer_flat_id: tk.payer_flat_id || "", payer_type: tk.payer_type || "owner",
+      tips_amount: String(tk.tips_amount ?? ""), tips_payer_flat_id: tk.tips_payer_flat_id || "",
+      tips_payer_type: tk.tips_payer_type || "owner", supplier: tk.supplier || "", notes: tk.notes || "",
+    });
+    setMedia(tk.media || []);
+    window.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const saveReadings = async () => {
@@ -101,7 +116,12 @@ export default function Water() {
 
         <TabsContent value="tankers">
           <div className="grid lg:grid-cols-[minmax(0,400px)_minmax(0,1fr)] gap-6 [&>*]:min-w-0">
-            <Card title="New tanker purchase" testId="tanker-form-card">
+            <Card title={editId ? "Edit tanker purchase" : "New tanker purchase"} testId="tanker-form-card"
+                  action={editId && (
+                    <button onClick={() => { setEditId(null); setForm(blank); setMedia([]); }}
+                            data-testid="cancel-tanker-edit-btn"
+                            className="text-slate-400 hover:text-slate-900"><X className="w-4 h-4" /></button>
+                  )}>
               {locked ? <p className="text-sm text-amber-700">This period is locked.</p> : (
                 <form onSubmit={addTanker} className="space-y-4">
                   <div>
@@ -175,7 +195,7 @@ export default function Water() {
                   </div>
                   <MediaUpload media={media} setMedia={setMedia} testId="tanker-media" />
                   <Button type="submit" data-testid="save-tanker-btn" className="w-full h-12 bg-slate-900 text-white">
-                    <Truck className="w-4 h-4 mr-2" /> Record purchase
+                    <Truck className="w-4 h-4 mr-2" /> {editId ? "Save changes" : "Record purchase"}
                   </Button>
                 </form>
               )}
@@ -210,10 +230,16 @@ export default function Water() {
                           <td><MediaThumbs media={tk.media} /></td>
                           <td className="text-right">
                             {!locked && (
-                              <button onClick={async () => { await api.delete(`/tankers/${tk.id}`); load(); setTick((x) => x + 1); }}
-                                      data-testid={`delete-tanker-${tk.id}`} className="text-slate-400 hover:text-red-600">
-                                <Trash2 className="w-4 h-4" />
-                              </button>
+                              <div className="flex justify-end gap-2">
+                                <button onClick={() => editTanker(tk)} data-testid={`edit-tanker-${tk.id}`}
+                                        className="text-slate-400 hover:text-slate-900">
+                                  <Pencil className="w-4 h-4" />
+                                </button>
+                                <button onClick={async () => { await api.delete(`/tankers/${tk.id}`); load(); setTick((x) => x + 1); }}
+                                        data-testid={`delete-tanker-${tk.id}`} className="text-slate-400 hover:text-red-600">
+                                  <Trash2 className="w-4 h-4" />
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>

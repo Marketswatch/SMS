@@ -1,0 +1,55 @@
+{
+  "summary": "Iteration 4 e2e testing of the workspace mode chooser, the new Property (rental) module, and backlog items C-F. Backend: new pytest suite /app/backend/tests/test_iter4_rentals_annual.py — 39/40 pass (1 real failure: /api/annual leaks every flat's data to residents). Existing regression suite (backend_test.py + test_media_notify.py) 47/48 pass (only the known edge-proxy CORS wildcard case, not reported). Frontend Playwright: mode chooser + persistence + resident isolation, mode-aware nav/switchers, rental unit CRUD with edit prefill, all 4 collection kinds, rent-roll math (due/collected/pending/advance/deposit-held across months), status colours, bills paid + on-behalf-of-building tally, WhatsApp reminder URL (no server call), rent CSV+PDF export, owned-vs-managed report split, work photo gallery (3 side-by-side categorised groups), bulk reminders (count, next-up, per-row send marks sent and advances), tanker + charge pencil edit prefill, annual statement page with per-owner and month-by-month tables plus CSV/PDF export, and mobile 390x844. Maintenance demo regression re-verified after cleanup: water 3950, avg 0.1646, recurring 6500, maintenance 8600, billable 19050, MIS csv/pdf OK, Sunrise Residency 2026-08 still open. All QA_/TEST_ data cleaned up; seeded rental demo data restored to 86000/38000/48000/250000/15614.38/4614.38/22385.62.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "GET /api/annual", "issue": "No role scoping. Logged in as tenant1@societyhub.com (resident) the endpoint returns rows for ALL flats (101,102,201,202) with each owner's year-to-date billing, payments and closing balance, plus building-wide totals. /api/statement filters rows to the caller's own flat; /api/annual must do the same (or be admin-only like /api/annual/export, which correctly returns 403).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET /api/rentals/rent-roll, GET /api/rentals/export", "issue": "Malformed month values ('garbage', '2026-13', '2026') raise an unhandled exception in month_bounds() -> 500 Internal Server Error. Should validate with a YYYY-MM pattern and return 400/422."},
+      {"endpoint": "POST /api/rentals/collections, POST /api/rentals/expenses", "issue": "unit_id is not validated against rental_units — a collection/expense can be created for a non-existent unit (returns 200) and becomes an orphan record that never shows in the rent roll or building tally."},
+      {"endpoint": "PUT /api/rentals/units/{id}", "issue": "Full-replace semantics with UnitIn defaults: a partial payload silently wipes rent_amount, tenant, lease dates etc. (only the UI sends the full form). Consider a partial/patch model or requiring all fields explicitly."},
+      {"endpoint": "GET /api/rentals/rent-roll (lease_expiring_soon)", "issue": "The flag is true for ANY lease_end earlier than the end of next month, including leases that expired long ago, so the Rent Roll lease-expiry banner will keep nagging about historical leases of vacant units. Should be a window: today <= lease_end <= end of next month."},
+      {"endpoint": "GET /api/rentals/rent-roll (lease_active)", "issue": "Off-by-one: lease_start is compared to the first day of the NEXT month (month_bounds end), so a lease starting on the 1st of next month is treated as active (and billed) for the selected month."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "rentals/Expenses.jsx — 'Paid on behalf of buildings' tally card", "issue": "The table is not wrapped in an overflow-x-auto container (unlike every other table in the app), so at 390px it overflows main (scrollWidth 699 vs 390) and is clipped by main's overflow-x-hidden — the Amount column is unreachable on mobile.", "selector": "[data-testid=\"building-tally-card\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Rentals — Units / Collections / Bills Paid forms", "issues": ["Native <input type=\"date\"> still used for lease start/end, collection date and bill date instead of the shadcn calendar/date-picker (same note as iteration 3)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter4_rentals_annual.py",
+    "/app/backend/tests/cleanup_iter4.py",
+    "/app/test_reports/pytest/iter4_results.xml",
+    "/app/test_reports/pytest/iter4_regression.xml"
+  ],
+  "action_items": [
+    "HIGH: scope GET /api/annual per role — a resident/owner must only see their own flat's yearly rows (mirror the /api/statement filter), or make the endpoint admin-only.",
+    "Validate the month query param (^\\d{4}-(0[1-9]|1[0-2])$) on /api/rentals/rent-roll and /api/rentals/export so bad input returns 400 instead of 500.",
+    "Validate unit_id exists on POST/PUT of /api/rentals/collections and /api/rentals/expenses (404 otherwise) to avoid orphan rows.",
+    "Tighten lease_expiring_soon to a forward-looking window (today .. end of next month) so already-expired leases stop raising the Rent Roll banner.",
+    "Fix the lease_start off-by-one in lease_active (compare against the last day of the selected month, not the 1st of the next).",
+    "Wrap the building-tally table on Bills Paid in <div className=\"overflow-x-auto\"> so its Amount column is reachable at 390px."
+  ],
+  "critical_code_review_comments": [
+    "rentals.py build_rent_roll(): the lease_expiring_soon expression (nested month_bounds(...).replace(...) with a string compare) is unreadable and is the source of the stale-lease flag bug — extract a small helper that returns the next-month window as ISO strings.",
+    "rentals.py: build_rent_roll loads ALL collections (find().to_list(5000)) on every rent-roll/export call just to compute deposits; will not scale — aggregate deposits with a $group pipeline per unit.",
+    "server.py annual_statement(): closing_balance is taken from the last month's net only; correct today because net carries forward, but it silently breaks if a month is missing from periods — derive it from carry-forward explicitly.",
+    "server.py is 1016 lines — approaching the 700-line guidance; the annual/export and MIS/export reporting code are good candidates to split into a reports module."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter4_rentals_annual.py (new)",
+    "/app/backend/tests/cleanup_iter4.py (new)"
+  ],
+  "success_rate": {"backend": "97.5% (39/40 new cases; 47/48 regression, only the known CORS-proxy case)", "frontend": "95% (all iteration-4 features work; 1 mobile clipping defect)"},
+  "seed_data_creation": "Temporarily created QA_Unit_UI rental unit + 4 collections + 3 bills, TEST_* units/collections/expenses, TEST_EditProp_iter4 / TEST_LockProp_iter4 throwaway properties, and one 'QA gallery charge' with 3 uploaded photos (bill/in_progress/completed) to verify the gallery. ALL deleted; seeded rental demo data and the open Sunrise Residency 2026-08 maintenance month are intact and verified.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@societyhub.com / admin123 (super_admin), tenant1@societyhub.com / demo123 (resident) — from /app/memory/test_credentials.md",
+  "context_for_next_testing_agent": "Verified this iteration and NOT worth re-running: mode chooser (/mode after admin login, both cards, maintenance -> /, rentals -> /rentals, mode-badge, switch-mode-btn, localStorage 'sh_mode' persistence, resident lands on /my-dues with no chooser/switcher), mode-aware nav (rentalNav 5 items + rent-month-switcher vs maintenanceNav + Annual Statement + property/period switchers), rental unit create (managed shows owner field) / edit prefill / delete with cascade, all 4 collection kinds + edit + delete, rent-roll math incl. deposit_held across months (23,000 = 30k-5k-2k) and advance-not-negative overpayment, status logic paid/pending/overdue/vacant, bills paid + on-behalf tally (4614.38 + 1200 = 5814.38), maintenance /api/statement provably unaffected, rentals 403 for residents, rent CSV(952B)+PDF(3552B) exports, owned-vs-managed report split, gallery dialog with 3 side-by-side groups and per-category counts, bulk reminders (label 'Remind all unpaid (3)', next-up advance, row marked sent, wa.me URL, zero server calls), tanker pencil -> 'Edit tanker purchase' with recomputed total/per-litre, charge pencil -> correct recurring vs adhoc form, annual page (4 owner rows + 1 month row, csv 749B / pdf 3068B), month-reset 423 lock on tanker+charge edits, and mobile 390x844. NOT verified: (a) the SMS deep link URL — window.location.href cannot be intercepted in Playwright (property is non-configurable); openSms() is the same shared helper verified in iteration 3, assert on it only via unit-level review; (b) the bulk-reminders 'no phone' warning branch — all 4 demo flats have phones; (c) the gallery per-group empty state — the QA charge had one photo in each of the 3 categories.",
+  "rca_of_the_issue": "GET /api/annual depends on current_user (any role) and, unlike GET /api/statement, never filters stmt['rows'] to the caller's own flat, so build_statement output for every flat is returned verbatim to residents/owners. Repro: login as tenant1@societyhub.com/demo123, GET /api/annual?property_id=<Sunrise Residency>&year=2026 -> rows for flats 101,102,201,202. Mitigation: apply the same owner/resident flat lookup + row filter used in the /statement handler (and filter the aggregate totals accordingly)."
+}

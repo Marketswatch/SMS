@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, Wand2, Wrench } from "lucide-react";
+import { Plus, Trash2, Wand2, Wrench, Pencil, X } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
 import { useApp } from "@/context/AppContext";
 import { PageHeader, Card, Stat, Empty } from "@/components/Common";
 import { MediaUpload, MediaThumbs } from "@/components/MediaUpload";
+import { WorkGallery } from "@/components/WorkGallery";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,6 +26,7 @@ export default function Charges() {
   const [job, setJob] = useState({ description: "", amount: "", payer_flat_id: "", payer_type: "owner", date: `${month}-01` });
   const [jobMedia, setJobMedia] = useState([]);
   const [recMedia, setRecMedia] = useState([]);
+  const [editId, setEditId] = useState(null);
 
   const load = useCallback(async () => {
     if (!propertyId) return;
@@ -45,10 +47,36 @@ export default function Charges() {
 
   const submit = async (payload, reset) => {
     try {
-      await api.post("/charges", { property_id: propertyId, month, ...payload });
-      toast.success("Charge recorded");
+      if (editId) await api.put(`/charges/${editId}`, { property_id: propertyId, month, ...payload });
+      else await api.post("/charges", { property_id: propertyId, month, ...payload });
+      toast.success(editId ? "Charge updated" : "Charge recorded");
+      setEditId(null);
       reset(); load(); setTick((t) => t + 1);
     } catch (e) { toast.error(errMsg(e)); }
+  };
+
+  const editCharge = (c) => {
+    setEditId(c.id);
+    if (c.category === "adhoc") {
+      setJob({ description: c.description || "", amount: String(c.amount ?? ""),
+               payer_flat_id: c.payer_flat_id || "", payer_type: c.payer_type || "owner",
+               date: c.date || `${month}-01` });
+      setJobMedia(c.media || []);
+    } else {
+      setRec({ charge_type: c.charge_type, person_name: c.person_name || "",
+               amount: String(c.amount ?? ""), payer_flat_id: c.payer_flat_id || "",
+               payer_type: c.payer_type || "owner", description: c.description || "",
+               date: c.date || `${month}-01` });
+      setRecMedia(c.media || []);
+    }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const cancelEdit = () => {
+    setEditId(null);
+    setRec({ ...rec, person_name: "", amount: "", description: "" });
+    setJob({ ...job, description: "", amount: "" });
+    setRecMedia([]); setJobMedia([]);
   };
 
   const applyDefaults = async () => {
@@ -82,11 +110,15 @@ export default function Charges() {
               <td>{flatName(c.payer_flat_id)}</td>
               <td className="capitalize text-slate-500">{c.payer_type}</td>
               <td className="text-slate-500">{c.date || "—"}</td>
-              <td><MediaThumbs media={c.media} showCategory /></td>
+              <td>{c.media?.length ? <WorkGallery charge={c} testId={`gallery-btn-${c.id}`} /> : <MediaThumbs media={c.media} showCategory />}</td>
               <td className="text-right">
                 {!locked && (
-                  <button onClick={() => del(c.id)} data-testid={`delete-charge-${c.id}`}
-                          className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                  <div className="flex justify-end gap-2">
+                    <button onClick={() => editCharge(c)} data-testid={`edit-charge-${c.id}`}
+                            className="text-slate-400 hover:text-slate-900"><Pencil className="w-4 h-4" /></button>
+                    <button onClick={() => del(c.id)} data-testid={`delete-charge-${c.id}`}
+                            className="text-slate-400 hover:text-red-600"><Trash2 className="w-4 h-4" /></button>
+                  </div>
                 )}
               </td>
             </tr>
@@ -123,7 +155,11 @@ export default function Charges() {
 
         <TabsContent value="recurring">
           <div className="grid lg:grid-cols-[380px_1fr] gap-6 [&>*]:min-w-0">
-            <Card title="Add recurring charge" testId="recurring-form-card">
+            <Card title={editId ? "Edit recurring charge" : "Add recurring charge"} testId="recurring-form-card"
+                  action={editId && (
+                    <button onClick={cancelEdit} data-testid="cancel-charge-edit-btn"
+                            className="text-slate-400 hover:text-slate-900"><X className="w-4 h-4" /></button>
+                  )}>
               {locked ? <p className="text-sm text-amber-700">This period is locked.</p> : (
                 <form className="space-y-4" onSubmit={(e) => {
                   e.preventDefault();
@@ -180,7 +216,7 @@ export default function Charges() {
                   <MediaUpload media={recMedia} setMedia={setRecMedia} testId="recurring-media-bill"
                                category="bill" label="Bill / Receipt photo" />
                   <Button type="submit" data-testid="save-recurring-btn" className="w-full h-12 bg-slate-900 text-white">
-                    <Plus className="w-4 h-4 mr-2" /> Add charge
+                    <Plus className="w-4 h-4 mr-2" /> {editId ? "Save changes" : "Add charge"}
                   </Button>
                 </form>
               )}
@@ -196,7 +232,11 @@ export default function Charges() {
 
         <TabsContent value="adhoc">
           <div className="grid lg:grid-cols-[380px_1fr] gap-6 [&>*]:min-w-0">
-            <Card title="Add one-time maintenance / repair" testId="adhoc-form-card">
+            <Card title={editId ? "Edit maintenance / repair" : "Add one-time maintenance / repair"} testId="adhoc-form-card"
+                  action={editId && (
+                    <button onClick={cancelEdit} data-testid="cancel-adhoc-edit-btn"
+                            className="text-slate-400 hover:text-slate-900"><X className="w-4 h-4" /></button>
+                  )}>
               {locked ? <p className="text-sm text-amber-700">This period is locked.</p> : (
                 <form className="space-y-4" onSubmit={(e) => {
                   e.preventDefault();
@@ -245,7 +285,7 @@ export default function Charges() {
                   <MediaUpload media={jobMedia} setMedia={setJobMedia} testId="adhoc-media-complete"
                                category="completed" label="Work completed photos / video" />
                   <Button type="submit" data-testid="save-adhoc-btn" className="w-full h-12 bg-slate-900 text-white">
-                    <Wrench className="w-4 h-4 mr-2" /> Record work
+                    <Wrench className="w-4 h-4 mr-2" /> {editId ? "Save changes" : "Record work"}
                   </Button>
                 </form>
               )}

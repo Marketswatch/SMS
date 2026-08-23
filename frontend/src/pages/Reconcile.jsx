@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { money, monthLabel, num } from "@/lib/format";
 import { duesMessage, openWhatsApp, openSms } from "@/lib/notify";
+import { BulkReminders } from "@/components/BulkReminders";
 import { useStatement } from "@/hooks/useStatement";
 
 export default function Reconcile() {
@@ -71,6 +72,7 @@ export default function Reconcile() {
   return (
     <div>
       <PageHeader title="Reconciliation" subtitle={`${statement?.property?.name || ""} · per-owner settlement · ${monthLabel(month)}`}>
+        {statement?.rows?.length > 0 && <BulkReminders rows={statement.rows} buildMessage={msgFor} />}
         {!locked && (
           <AlertDialog>
             <AlertDialogTrigger asChild>

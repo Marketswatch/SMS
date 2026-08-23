@@ -12,9 +12,15 @@ export function AppProvider({ children }) {
   const [propertyId, setPropertyId] = useState(localStorage.getItem("sh_prop") || "");
   const [periods, setPeriods] = useState([]);
   const [month, setMonth] = useState(thisMonth());
+  const [rentMonth, setRentMonth] = useState(thisMonth());
+  const [mode, setModeState] = useState(localStorage.getItem("sh_mode") || "");
   const [tick, setTick] = useState(0);
 
   const bump = useCallback(() => setTick((t) => t + 1), []);
+  const setMode = useCallback((m) => {
+    localStorage.setItem("sh_mode", m);
+    setModeState(m);
+  }, []);
 
   const loadProperties = useCallback(async () => {
     const { data } = await api.get("/properties");
@@ -41,7 +47,8 @@ export function AppProvider({ children }) {
 
   return (
     <AppCtx.Provider
-      value={{ properties, property, propertyId, setPropertyId, periods, month, setMonth, locked, bump, loadProperties }}
+      value={{ properties, property, propertyId, setPropertyId, periods, month, setMonth, locked,
+               bump, loadProperties, mode, setMode, rentMonth, setRentMonth }}
     >
       {children}
     </AppCtx.Provider>

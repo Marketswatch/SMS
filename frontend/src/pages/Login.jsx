@@ -16,7 +16,7 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    if (user) nav(user.role === "admin" || user.role === "super_admin" ? "/" : "/my-dues", { replace: true });
+    if (user) nav(user.role === "admin" || user.role === "super_admin" ? "/mode" : "/my-dues", { replace: true });
   }, [user, nav]);
 
   const submit = async (e) => {
@@ -25,7 +25,7 @@ export default function Login() {
     setError("");
     try {
       const u = await login(email, password);
-      nav(u.role === "admin" || u.role === "super_admin" ? "/" : "/my-dues", { replace: true });
+      nav(u.role === "admin" || u.role === "super_admin" ? "/mode" : "/my-dues", { replace: true });
     } catch (err) {
       setError(errMsg(err));
     } finally {

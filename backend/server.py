@@ -21,6 +21,7 @@ from bson import ObjectId
 
 import auth as A
 from engine import compute_statement, RECURRING_TYPES, ADHOC_TYPES
+import rentals
 import storage as S
 
 logging.basicConfig(level=logging.INFO)
@@ -382,6 +383,22 @@ async def list_tankers(property_id: str, month: str, user: dict = Depends(admin_
     return [ser(d) for d in docs]
 
 
+@api.put("/tankers/{tid}")
+async def update_tanker(tid: str, body: TankerIn, user: dict = Depends(admin_user)):
+    existing = await db.tankers.find_one({"_id": oid(tid)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Tanker not found")
+    await guard_open(existing["property_id"], existing["month"])
+    await guard_open(body.property_id, body.month)
+    doc = body.model_dump()
+    doc["total_qty"] = doc["qty_sump"] + doc["qty_syntex"]
+    doc["total_cost"] = doc["amount"] + (doc.get("tips_amount") or 0)
+    doc["cost_per_litre"] = round(doc["total_cost"] / doc["total_qty"], 4) if doc["total_qty"] else 0
+    doc["updated_at"] = datetime.now(timezone.utc)
+    await db.tankers.update_one({"_id": oid(tid)}, {"$set": doc})
+    return ser(await db.tankers.find_one({"_id": oid(tid)}))
+
+
 @api.delete("/tankers/{tid}")
 async def delete_tanker(tid: str, user: dict = Depends(admin_user)):
     doc = await db.tankers.find_one({"_id": oid(tid)})
@@ -469,6 +486,22 @@ async def create_charge(body: ChargeIn, user: dict = Depends(admin_user)):
 async def list_charges(property_id: str, month: str, user: dict = Depends(admin_user)):
     docs = await db.charges.find({"property_id": property_id, "month": month}).to_list(1000)
     return [ser(d) for d in docs]
+
+
+@api.put("/charges/{cid}")
+async def update_charge(cid: str, body: ChargeIn, user: dict = Depends(admin_user)):
+    existing = await db.charges.find_one({"_id": oid(cid)})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Charge not found")
+    if body.charge_type not in RECURRING_TYPES + ADHOC_TYPES:
+        raise HTTPException(status_code=400, detail="Unknown charge type")
+    await guard_open(existing["property_id"], existing["month"])
+    await guard_open(body.property_id, body.month)
+    doc = body.model_dump()
+    doc["category"] = "adhoc" if body.charge_type in ADHOC_TYPES else "recurring"
+    doc["updated_at"] = datetime.now(timezone.utc)
+    await db.charges.update_one({"_id": oid(cid)}, {"$set": doc})
+    return ser(await db.charges.find_one({"_id": oid(cid)}))
 
 
 @api.delete("/charges/{cid}")
@@ -575,6 +608,144 @@ async def statement(property_id: str, month: str, user: dict = Depends(current_u
         stmt["meters"] = [m for m in stmt["meters"] if m.get("flat_id") == fid]
         stmt["my_flat_id"] = fid
     return stmt
+
+
+@api.get("/annual")
+async def annual_statement(property_id: str, year: int, user: dict = Depends(current_user)):
+    prop = await db.properties.find_one({"_id": oid(property_id)})
+    if not prop:
+        raise HTTPException(status_code=404, detail="Property not found")
+    my_flat_id = None
+    if user.get("role") in {"owner", "resident"}:
+        flat = await db.flats.find_one({"property_id": property_id,
+                                        "$or": [{"owner_user_id": user["id"]}, {"tenant_user_id": user["id"]}]})
+        my_flat_id = str(flat["_id"]) if flat else "none"
+    periods = await db.periods.find({"property_id": property_id,
+                                    "month": {"$regex": f"^{year}-"}}).sort("month", 1).to_list(24)
+    months = []
+    per_flat = {}
+    for p in periods:
+        month = p["month"]
+        stmt = p.get("snapshot") if p.get("status") == "locked" and p.get("snapshot") else \
+            await build_statement(property_id, month)
+        t = stmt["totals"]
+        months.append({
+            "month": month, "status": p.get("status", "open"),
+            "water_spend": t["total_water_spend"], "litres": t["total_litres"],
+            "avg_cost_per_litre": t["avg_cost_per_litre"], "consumed": t["total_consumed"],
+            "reserve_litres": t["reserve_litres"],
+            "recurring_total": t["recurring_total"], "maintenance_total": t["maintenance_total"],
+            "billable_total": t["billable_total"], "received": t["total_received"],
+            "contributions": t["total_contributions"], "net_position": t["net_position"],
+        })
+        for r in stmt["rows"]:
+            if my_flat_id and r["flat_id"] != my_flat_id:
+                continue
+            f = per_flat.setdefault(r["flat_id"], {
+                "flat_id": r["flat_id"], "flat_number": r["flat_number"], "owner_name": r["owner_name"],
+                "consumption": 0.0, "water_cost": 0.0, "recurring": 0.0, "maintenance": 0.0,
+                "billable": 0.0, "contributions": 0.0, "received": 0.0, "payouts": 0.0,
+                "months": [],
+            })
+            f["consumption"] += r["consumption"]
+            f["water_cost"] += r["water_cost"]
+            f["recurring"] += r["recurring_share"]
+            f["maintenance"] += r["maintenance_share"]
+            f["billable"] += r["base_cost"]
+            f["contributions"] += r["contributions"]
+            f["received"] += r["received"]
+            f["payouts"] += r["payouts"]
+            f["months"].append({"month": month, "billable": r["base_cost"], "paid": r["received"],
+                                "fronted": r["contributions"], "net": r["net"]})
+
+    rows = []
+    for f in per_flat.values():
+        closing = f["months"][-1]["net"] if f["months"] else 0
+        rows.append({**{k: (round(v, 2) if isinstance(v, float) else v) for k, v in f.items()},
+                     "closing_balance": round(closing, 2)})
+    rows.sort(key=lambda r: str(r["flat_number"]))
+
+    return {
+        "property": {"id": property_id, "name": prop.get("name"), "address": prop.get("address")},
+        "year": year, "months": months, "rows": rows,
+        "totals": {
+            "months_recorded": len(months),
+            "water_spend": round(sum(m["water_spend"] for m in months), 2),
+            "litres": round(sum(m["litres"] for m in months), 2),
+            "recurring_total": round(sum(m["recurring_total"] for m in months), 2),
+            "maintenance_total": round(sum(m["maintenance_total"] for m in months), 2),
+            "billable_total": round(sum(m["billable_total"] for m in months), 2),
+            "received": round(sum(m["received"] for m in months), 2),
+            "closing_position": round(sum(r["closing_balance"] for r in rows), 2),
+        },
+    }
+
+
+@api.get("/annual/export")
+async def annual_export(property_id: str, year: int, format: str = Query("csv"),
+                        user: dict = Depends(admin_user)):
+    data = await annual_statement(property_id, year, user)
+    t = data["totals"]
+    head = ["Flat", "Owner", "Consumption L", "Water cost", "Recurring", "Maintenance",
+            "Total billed", "Fronted", "Paid", "Payouts", "Closing balance"]
+
+    def vals(r):
+        return [r["flat_number"], r["owner_name"], r["consumption"], r["water_cost"], r["recurring"],
+                r["maintenance"], r["billable"], r["contributions"], r["received"], r["payouts"],
+                r["closing_balance"]]
+
+    if format == "csv":
+        buf = io.StringIO()
+        w = csv.writer(buf)
+        w.writerow([f"SocietyHub Annual Statement — {data['property']['name']} — {year}"])
+        w.writerow([])
+        w.writerow(["Months recorded", t["months_recorded"], "Water spend", t["water_spend"],
+                    "Litres", t["litres"]])
+        w.writerow(["Recurring", t["recurring_total"], "Maintenance", t["maintenance_total"],
+                    "Total billed", t["billable_total"], "Collected", t["received"]])
+        w.writerow([])
+        w.writerow(head)
+        for r in data["rows"]:
+            w.writerow(vals(r))
+        w.writerow([])
+        w.writerow(["Month", "Litres", "Water spend", "Avg /L", "Recurring", "Maintenance", "Billed", "Collected"])
+        for m in data["months"]:
+            w.writerow([m["month"], m["litres"], m["water_spend"], m["avg_cost_per_litre"],
+                        m["recurring_total"], m["maintenance_total"], m["billable_total"], m["received"]])
+        out = buf.getvalue().encode("utf-8")
+        return StreamingResponse(io.BytesIO(out), media_type="text/csv",
+                                 headers={"Content-Disposition": f'attachment; filename="annual-{year}.csv"'})
+
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title=f"Annual {year}")
+    styles = getSampleStyleSheet()
+    story = [Paragraph(f"Annual Statement — {data['property']['name']} — {year}", styles["Title"]),
+             Spacer(1, 10)]
+    tbl = Table([head] + [vals(r) for r in data["rows"]], repeatRows=1)
+    tbl.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+                             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                             ("FONTSIZE", (0, 0), (-1, -1), 7),
+                             ("ALIGN", (2, 1), (-1, -1), "RIGHT")]))
+    story += [tbl, Spacer(1, 16), Paragraph("Month by month", styles["Heading3"])]
+    mh = ["Month", "Litres", "Water spend", "Avg /L", "Recurring", "Maintenance", "Billed", "Collected"]
+    mt = Table([mh] + [[m["month"], m["litres"], m["water_spend"], m["avg_cost_per_litre"],
+                        m["recurring_total"], m["maintenance_total"], m["billable_total"], m["received"]]
+                       for m in data["months"]], repeatRows=1)
+    mt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+                            ("FONTSIZE", (0, 0), (-1, -1), 7),
+                            ("ALIGN", (1, 1), (-1, -1), "RIGHT")]))
+    story += [mt]
+    doc.build(story)
+    buf.seek(0)
+    return StreamingResponse(buf, media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="annual-{year}.pdf"'})
 
 
 # ---------------------------------------------------------------- month reset
@@ -821,6 +992,7 @@ async def demo_seed(user: dict = Depends(admin_user)):
 
 
 app.include_router(api)
+app.include_router(rentals.make_router(db))
 
 app.add_middleware(
     CORSMiddleware,
