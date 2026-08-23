@@ -24,6 +24,7 @@ export default function Charges() {
   const [rec, setRec] = useState({ charge_type: "cleaning", person_name: "", amount: "", payer_flat_id: "", payer_type: "tenant", description: "", date: `${month}-01` });
   const [job, setJob] = useState({ description: "", amount: "", payer_flat_id: "", payer_type: "owner", date: `${month}-01` });
   const [jobMedia, setJobMedia] = useState([]);
+  const [recMedia, setRecMedia] = useState([]);
 
   const load = useCallback(async () => {
     if (!propertyId) return;
@@ -70,7 +71,7 @@ export default function Charges() {
     <div className="overflow-x-auto">
       <table className="data-table">
         <thead><tr><th>Type</th><th>Description</th><th>Person</th><th className="text-right">Amount</th>
-          <th>Fronted by</th><th>As</th><th>Date</th><th>Media</th><th /></tr></thead>
+          <th>Fronted by</th><th>As</th><th>Date</th><th>Bill / Work media</th><th /></tr></thead>
         <tbody>
           {rows.map((c) => (
             <tr key={c.id} data-testid={`${testId}-row-${c.id}`}>
@@ -81,7 +82,7 @@ export default function Charges() {
               <td>{flatName(c.payer_flat_id)}</td>
               <td className="capitalize text-slate-500">{c.payer_type}</td>
               <td className="text-slate-500">{c.date || "—"}</td>
-              <td><MediaThumbs media={c.media} /></td>
+              <td><MediaThumbs media={c.media} showCategory /></td>
               <td className="text-right">
                 {!locked && (
                   <button onClick={() => del(c.id)} data-testid={`delete-charge-${c.id}`}
@@ -97,7 +98,7 @@ export default function Charges() {
 
   return (
     <div>
-      <PageHeader title="Charges" subtitle={`Recurring and one-time entries · ${monthLabel(month)}`}>
+      <PageHeader title="Charges" subtitle={`${property?.name || ""} · recurring and one-time entries · ${monthLabel(month)}`}>
         {!locked && (
           <Button variant="outline" onClick={applyDefaults} data-testid="apply-defaults-btn">
             <Wand2 className="w-4 h-4 mr-2" /> Auto-fill monthly defaults
@@ -121,7 +122,7 @@ export default function Charges() {
         </TabsList>
 
         <TabsContent value="recurring">
-          <div className="grid lg:grid-cols-[380px_1fr] gap-6">
+          <div className="grid lg:grid-cols-[380px_1fr] gap-6 [&>*]:min-w-0">
             <Card title="Add recurring charge" testId="recurring-form-card">
               {locked ? <p className="text-sm text-amber-700">This period is locked.</p> : (
                 <form className="space-y-4" onSubmit={(e) => {
@@ -129,8 +130,8 @@ export default function Charges() {
                   submit({
                     charge_type: rec.charge_type, person_name: rec.person_name,
                     amount: Number(rec.amount || 0), payer_flat_id: rec.payer_flat_id || null,
-                    payer_type: rec.payer_type, description: rec.description, date: rec.date, media: [],
-                  }, () => setRec({ ...rec, person_name: "", amount: "", description: "" }));
+                    payer_type: rec.payer_type, description: rec.description, date: rec.date, media: recMedia,
+                  }, () => { setRec({ ...rec, person_name: "", amount: "", description: "" }); setRecMedia([]); });
                 }}>
                   <div>
                     <Label className="label-caps">Charge type</Label>
@@ -176,6 +177,8 @@ export default function Charges() {
                     <Input type="date" className="mt-2 h-11" data-testid="recurring-date-input"
                            value={rec.date} onChange={(e) => setRec({ ...rec, date: e.target.value })} />
                   </div>
+                  <MediaUpload media={recMedia} setMedia={setRecMedia} testId="recurring-media-bill"
+                               category="bill" label="Bill / Receipt photo" />
                   <Button type="submit" data-testid="save-recurring-btn" className="w-full h-12 bg-slate-900 text-white">
                     <Plus className="w-4 h-4 mr-2" /> Add charge
                   </Button>
@@ -192,7 +195,7 @@ export default function Charges() {
         </TabsContent>
 
         <TabsContent value="adhoc">
-          <div className="grid lg:grid-cols-[380px_1fr] gap-6">
+          <div className="grid lg:grid-cols-[380px_1fr] gap-6 [&>*]:min-w-0">
             <Card title="Add one-time maintenance / repair" testId="adhoc-form-card">
               {locked ? <p className="text-sm text-amber-700">This period is locked.</p> : (
                 <form className="space-y-4" onSubmit={(e) => {
@@ -235,7 +238,12 @@ export default function Charges() {
                     <Input type="date" className="mt-2 h-11" data-testid="adhoc-date-input"
                            value={job.date} onChange={(e) => setJob({ ...job, date: e.target.value })} />
                   </div>
-                  <MediaUpload media={jobMedia} setMedia={setJobMedia} testId="adhoc-media" />
+                  <MediaUpload media={jobMedia} setMedia={setJobMedia} testId="adhoc-media-bill"
+                               category="bill" label="Bill / Invoice photo" />
+                  <MediaUpload media={jobMedia} setMedia={setJobMedia} testId="adhoc-media-progress"
+                               category="in_progress" label="Work in progress photos / video" />
+                  <MediaUpload media={jobMedia} setMedia={setJobMedia} testId="adhoc-media-complete"
+                               category="completed" label="Work completed photos / video" />
                   <Button type="submit" data-testid="save-adhoc-btn" className="w-full h-12 bg-slate-900 text-white">
                     <Wrench className="w-4 h-4 mr-2" /> Record work
                   </Button>

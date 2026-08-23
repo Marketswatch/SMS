@@ -4,7 +4,7 @@ import { Truck, Trash2, Save, AlertTriangle } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
 import { useApp } from "@/context/AppContext";
 import { PageHeader, Card, Stat, Empty } from "@/components/Common";
-import { MediaUpload, MediaThumbs } from "@/components/MediaUpload";
+import { MediaUpload, MediaThumbs, MediaMini } from "@/components/MediaUpload";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -68,6 +68,7 @@ export default function Water() {
         readings: readings.map((r) => ({
           meter_id: r.meter_id, opening: Number(r.opening || 0),
           closing: r.closing === "" || r.closing === null ? null : Number(r.closing),
+          media: r.media || [],
         })),
       });
       toast.success("Readings saved");
@@ -80,7 +81,7 @@ export default function Water() {
 
   return (
     <div>
-      <PageHeader title="Water" subtitle={`Tanker purchases & meter readings · ${monthLabel(month)}`} />
+      <PageHeader title="Water" subtitle={`${property?.name || ""} · tanker purchases & meter readings · ${monthLabel(month)}`} />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <Stat testId="water-stat-purchased" label="Purchased" value={litres(t?.total_litres)} sub={`${money(t?.total_water_spend)} incl. tips`} />
@@ -99,7 +100,7 @@ export default function Water() {
         </TabsList>
 
         <TabsContent value="tankers">
-          <div className="grid lg:grid-cols-[minmax(0,400px)_minmax(0,1fr)] gap-6">
+          <div className="grid lg:grid-cols-[minmax(0,400px)_minmax(0,1fr)] gap-6 [&>*]:min-w-0">
             <Card title="New tanker purchase" testId="tanker-form-card">
               {locked ? <p className="text-sm text-amber-700">This period is locked.</p> : (
                 <form onSubmit={addTanker} className="space-y-4">
@@ -229,7 +230,7 @@ export default function Water() {
           <Card title="Meter readings" testId="readings-card"
                 action={!locked && (
                   <Button onClick={saveReadings} data-testid="save-readings-btn" className="bg-slate-900 text-white h-9">
-                    <Save className="w-4 h-4 mr-2" /> Save readings
+                    <Save className="w-4 h-4 mr-2" /> Save readings & photos
                   </Button>
                 )}>
             {!readings.length ? (
@@ -244,15 +245,16 @@ export default function Water() {
                 ))}
                 <div className="overflow-x-auto">
                   <table className="data-table">
-                    <thead><tr><th>Meter</th><th>Flat</th><th className="text-right">Opening</th>
-                      <th className="text-right">Closing</th><th className="text-right">Consumption</th></tr></thead>
+                    <thead><tr><th>Meter</th><th>Building / Flat</th><th className="text-right">Opening</th>
+                      <th className="text-right">Closing</th><th className="text-right">Consumption</th>
+                      <th>Meter photo / video</th></tr></thead>
                     <tbody>
                       {readings.map((r, idx) => {
                         const cons = r.closing !== null && r.closing !== "" ? Number(r.closing) - Number(r.opening) : null;
                         return (
                           <tr key={r.meter_id} data-testid={`reading-row-${r.label}`}>
                             <td className="font-semibold">{r.label}</td>
-                            <td>{flatName(r.flat_id)}</td>
+                            <td><span className="text-slate-400">{property?.name} / </span>{flatName(r.flat_id)}</td>
                             <td className="text-right">
                               <Input type="number" inputMode="decimal" step="any" disabled={locked}
                                      data-testid={`reading-opening-${r.label}`}
@@ -267,6 +269,13 @@ export default function Water() {
                             </td>
                             <td className={`num font-semibold ${cons !== null && cons < 0 ? "text-amber-600" : ""}`}>
                               {cons === null ? "—" : cons < 0 ? "0 · flagged" : num(cons)}
+                            </td>
+                            <td>
+                              {locked ? <MediaThumbs media={r.media} /> : (
+                                <MediaMini media={r.media || []} testId={`reading-media-${r.label}`}
+                                           setMedia={(fn) => setReadings((prev) => prev.map((x, i) =>
+                                             i === idx ? { ...x, media: typeof fn === "function" ? fn(x.media || []) : fn } : x))} />
+                              )}
                             </td>
                           </tr>
                         );

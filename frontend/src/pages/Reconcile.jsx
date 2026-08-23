@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Trash2, HandCoins, Lock } from "lucide-react";
+import { Trash2, HandCoins, Lock, MessageCircle, Send } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
 import { useApp } from "@/context/AppContext";
 import { PageHeader, Card, Stat, NetBadge, Empty } from "@/components/Common";
@@ -13,6 +13,7 @@ import {
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { money, monthLabel, num } from "@/lib/format";
+import { duesMessage, openWhatsApp, openSms } from "@/lib/notify";
 import { useStatement } from "@/hooks/useStatement";
 
 export default function Reconcile() {
@@ -62,10 +63,14 @@ export default function Reconcile() {
 
   const flatName = (id) => flats.find((f) => f.id === id)?.number || "—";
   const t = statement?.totals;
+  const msgFor = (r) => duesMessage({
+    building: statement?.property?.name || "Society",
+    flat: r.flat_number, monthName: monthLabel(month), row: r,
+  });
 
   return (
     <div>
-      <PageHeader title="Reconciliation" subtitle={`Per-owner settlement · ${monthLabel(month)}`}>
+      <PageHeader title="Reconciliation" subtitle={`${statement?.property?.name || ""} · per-owner settlement · ${monthLabel(month)}`}>
         {!locked && (
           <AlertDialog>
             <AlertDialogTrigger asChild>
@@ -110,7 +115,7 @@ export default function Reconcile() {
               <thead>
                 <tr><th>Flat</th><th>Owner</th><th className="text-right">Base cost</th><th className="text-right">Contributed</th>
                   <th className="text-right">Carry-in</th><th className="text-right">Tenant paid</th><th className="text-right">Owner paid</th>
-                  <th className="text-right">Payout</th><th>Position</th></tr>
+                  <th className="text-right">Payout</th><th>Position</th><th>Notify owner</th></tr>
               </thead>
               <tbody>
                 {statement.rows.map((r) => (
@@ -124,6 +129,24 @@ export default function Reconcile() {
                     <td className="num">{money(r.received_by_owner)}</td>
                     <td className="num">{money(r.payouts)}</td>
                     <td><NetBadge value={r.net} testId={`reconcile-net-${r.flat_number}`} /></td>
+                    <td>
+                      {r.owner_phone ? (
+                        <div className="flex gap-1.5">
+                          <button title={`WhatsApp ${r.owner_phone}`} aria-label={`Send WhatsApp dues message to ${r.owner_name}`} data-testid={`notify-whatsapp-${r.flat_number}`}
+                                  onClick={() => openWhatsApp(r.owner_phone, msgFor(r))}
+                                  className="p-2.5 border border-slate-300 rounded-md hover:bg-emerald-50 hover:border-emerald-300 text-emerald-700">
+                            <MessageCircle className="w-4 h-4" />
+                          </button>
+                          <button title={`SMS ${r.owner_phone}`} aria-label={`Send SMS dues message to ${r.owner_name}`} data-testid={`notify-sms-${r.flat_number}`}
+                                  onClick={() => openSms(r.owner_phone, msgFor(r))}
+                                  className="p-2.5 border border-slate-300 rounded-md hover:bg-slate-100 text-slate-700">
+                            <Send className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-slate-400">Add owner phone in Setup</span>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -132,7 +155,7 @@ export default function Reconcile() {
         )}
       </Card>
 
-      <div className="grid lg:grid-cols-[380px_1fr] gap-6">
+      <div className="grid lg:grid-cols-[380px_1fr] gap-6 [&>*]:min-w-0">
         <Card title="Record payment / payout" testId="payment-form-card">
           {locked ? <p className="text-sm text-amber-700">This period is locked.</p> : (
             <form onSubmit={add} className="space-y-4">

@@ -396,6 +396,7 @@ class ReadingIn(BaseModel):
     meter_id: str
     opening: float
     closing: Optional[float] = None
+    media: List[Dict[str, Any]] = []
 
 
 class ReadingsBulk(BaseModel):
@@ -417,6 +418,7 @@ async def list_readings(property_id: str, month: str, user: dict = Depends(curre
             "meter_id": mid, "label": m.get("label"), "flat_id": m.get("flat_id"),
             "opening": float(r["opening"]) if r else float(m.get("opening", 0) or 0),
             "closing": (float(r["closing"]) if r and r.get("closing") is not None else None),
+            "media": (r.get("media") or []) if r else [],
         })
     return out
 
@@ -428,7 +430,7 @@ async def save_readings(body: ReadingsBulk, user: dict = Depends(admin_user)):
     for r in body.readings:
         await db.readings.update_one(
             {"property_id": body.property_id, "month": body.month, "meter_id": r.meter_id},
-            {"$set": {"opening": r.opening, "closing": r.closing,
+            {"$set": {"opening": r.opening, "closing": r.closing, "media": r.media,
                       "updated_at": datetime.now(timezone.utc)}},
             upsert=True,
         )
@@ -757,14 +759,14 @@ async def demo_seed(user: dict = Depends(admin_user)):
     month = current_month()
     await ensure_period(pid, month)
 
-    flats_spec = [("101", "Ramesh Kumar", "Arjun Rao", owner_id, tenant_id),
-                  ("102", "Sunita Desai", "", None, None),
-                  ("201", "Vikram Nair", "Priya Menon", None, None),
-                  ("202", "Anil Joshi", "", None, None)]
+    flats_spec = [("101", "Ramesh Kumar", "Arjun Rao", owner_id, tenant_id, "9876500101"),
+                  ("102", "Sunita Desai", "", None, None, "9876500102"),
+                  ("201", "Vikram Nair", "Priya Menon", None, None, "9876500201"),
+                  ("202", "Anil Joshi", "", None, None, "9876500202")]
     flat_ids = []
-    for num, owner, tenant, ouid, tuid in flats_spec:
+    for num, owner, tenant, ouid, tuid, phone in flats_spec:
         r = await db.flats.insert_one({"property_id": pid, "number": num, "owner_name": owner,
-                                       "owner_user_id": ouid, "owner_phone": "",
+                                       "owner_user_id": ouid, "owner_phone": phone,
                                        "tenant_name": tenant, "tenant_user_id": tuid, "tenant_phone": "",
                                        "created_at": datetime.now(timezone.utc)})
         fid = str(r.inserted_id)

@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 3 focused on the four new requirements (building reference on flats, meter-reading media, categorised maintenance/bill media, free WhatsApp+SMS notify) plus a light regression and the auth playbook checks. Backend: 51/52 pytest cases pass (only the known edge-proxy CORS wildcard case fails, per instructions not re-reported). Frontend: Playwright verified Setup (building dropdown + phones + inline phone edit), Water meter-reading media (multiple files, per-meter isolation, persistence after reload, removal), Charges (3 categorised uploaders + recurring bill photo + table media column via authenticated /api/files), Reconcile notify (wa.me URL with 91-prefixed number and row-accurate message, sms: URL with same body, zero server-side calls), and mobile 390x844. All four requirements work end-to-end. One real mobile layout defect found (form cards overflow the 390px viewport on Charges and Setup > Flats, pushing the 'Gallery' upload buttons off-screen). All test data created was cleaned up; Sunrise Residency demo totals verified back to 3950 / 0.1646 / 6500 / 8600 / 19050 and the month is still open.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/* (edge proxy)", "issue": "Access-Control-Allow-Origin returned as '*' by the ingress even though CORS_ORIGINS is explicit in backend/.env - app-level config verified correct, environment artefact only (not re-reported per main agent note)"}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Charges page (both tabs) - grid lg:grid-cols-[380px_1fr]", "issue": "At 390x844 the page shell overflows horizontally (document.scrollWidth 517 > 390) and the form Card measures 1005px wide, so the right half of Work description / Amount / Date inputs and ALL THREE 'Gallery' upload buttons sit off-screen (button x = -41 after horizontal scroll, right edge 432 > 390). Camera buttons are reachable, Gallery buttons are not without horizontal scrolling. Root cause: grid children have no min-w-0, so the wide inner charges table stretches the single-column track.", "selector": "[data-testid=\"adhoc-form-card\"], [data-testid=\"adhoc-media-bill-upload-btn\"], [data-testid=\"adhoc-media-progress-upload-btn\"], [data-testid=\"adhoc-media-complete-upload-btn\"]", "priority": "HIGH"},
+      {"component": "Setup > Flats (Add flat card)", "issue": "Same root cause at 390px: add-flat-card is 708px wide inside a main with overflow-x-hidden, so the right portion of the Building select / Flat number / Owner phone / Tenant phone inputs is clipped and NOT scrollable (document.scrollWidth stays 390). Fields are still fillable programmatically but visually truncated for a mobile user.", "selector": "[data-testid=\"add-flat-card\"], [data-testid=\"flat-property-select\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Charges (recurring + one-time) and Reconciliation payment form", "issues": ["Date fields use the native browser date picker (<input type=\"date\">) instead of the shadcn calendar component"]},
+      {"screen": "Reconciliation > Notify owner column", "issues": ["WhatsApp/SMS buttons are icon-only with a title attribute but no aria-label - screen-reader/accessibility gap", "34x34px tap targets on mobile are below the 44px recommendation (the meter-reading camera/gallery buttons are also 34x34)"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_media_notify.py",
+    "/app/backend/tests/test_auth_playbook.py",
+    "/app/backend/tests/cleanup_iter3.py",
+    "/app/test_reports/pytest/iteration_3.xml"
+  ],
+  "action_items": [
+    "Add min-w-0 (and/or wrap the tables in a min-w-0 overflow-x-auto container) on the grid children in Charges.jsx and Setup.jsx so the form cards fit inside 390px - currently the three work-photo 'Gallery' buttons are off-screen on mobile, which breaks requirement 3 on phones.",
+    "Optional: replace native <input type=\"date\"> with the shadcn calendar/date-picker on Charges and Reconcile.",
+    "Optional: add aria-label to notify-whatsapp-{flat}/notify-sms-{flat} buttons and bump icon tap targets to 40-44px on mobile.",
+    "Optional hardening: the flats table 'Building / Flat' cell prints the currently selected property name rather than resolving flat.property_id; correct today because the list is filtered per building, but it would mislabel if a mixed list is ever rendered."
+  ],
+  "critical_code_review_comments": [
+    "MediaUpload category filtering is correct (thumbs filter by m.category) and all three adhoc uploaders share one jobMedia array, so the saved charge stores each item tagged bill/in_progress/completed - verified in DB via GET /api/charges.",
+    "notify.js waNumber prefixes 91 only for 10-digit inputs and openSms/openWhatsApp are purely client-side; no SMS/paid gateway exists server-side (openapi has no sms/whatsapp/notify path, no twilio/msg91/gupshup reference in server.py).",
+    "GET /api/files/{id} accepts the token via ?auth= query param, which puts the JWT into browser history / referrer headers for every thumbnail. Consider short-lived signed URLs instead.",
+    "save_readings overwrites media with whatever the client sends (whole-array replace). Acceptable for this UI but a stale tab can silently drop another user's uploaded photos - consider merging by id or an updated_at guard.",
+    "PUT /api/flats requires the full FlatIn body; the inline phone edit sends {...f, owner_phone} which includes the server-generated id/created_at fields (ignored). Fine, but a PATCH-style model would be safer."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_media_notify.py",
+    "/app/backend/tests/test_auth_playbook.py",
+    "/app/backend/tests/cleanup_iter3.py"
+  ],
+  "success_rate": {"backend": "98% (51/52; only the known edge-proxy CORS case fails)", "frontend": "95% (all four new features work; 1 mobile layout defect)"},
+  "seed_data_creation": "Temporary only: flat TEST_777 under Srinithi Apartments, one TEST_ maintenance charge (1234) with 4 media, one TEST_ recurring charge (77) with 1 media, 3 photos on Meter 101 readings, TEST_Building_A property (backend test). All deleted via /app/backend/tests/cleanup_iter3.py; flat 101 owner phone restored to 9876500101 and Sunrise totals re-verified (3950 / 0.1646 / 6500 / 8600 / 19050, period 2026-08 still open). A few uploaded file docs remain in db.files/storage (no delete endpoint exists) - harmless orphans.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@societyhub.com / admin123 (from /app/memory/test_credentials.md); auth playbook verified: $2b$ bcrypt hash, httpOnly+Secure cookies on login, cookie-only /api/auth/me works, 429 lockout exactly on the 6th failed attempt, seed_admin re-hashes when ADMIN_PASSWORD changes.",
+  "context_for_next_testing_agent": "Verified this iteration: building dropdown files flats under the chosen building and the app switches to it (toast 'Flat added to Srinithi Apartments'); Building / Flat labelling present on Setup subtitle, flats table, meters and readings tables; owner/tenant phone persist and the inline flat-phone-edit-{n} saves on blur via PUT /api/flats; meter-reading media (multi-file, camera+gallery, isolation across 101/102/201/202, persistence, removal) all pass; three categorised charge uploaders store category bill/in_progress/completed and the table media column opens via /api/files?auth=; recurring bill photo persists; WhatsApp opens https://wa.me/91XXXXXXXXXX?text=... and SMS navigates to sms:XXXXXXXXXX?&body=... with a body matching the row exactly, with zero POST/PUT to the backend; 'Add owner phone in Setup' shows for Srinithi flats without phones. Regression OK: dashboard/MIS math, tanker tips per-litre, CSV+PDF downloads (mis-2026-08.csv/pdf). Only open item is the mobile grid overflow. To capture the sms: navigation in Playwright use a CDP session (page.context.new_cdp_session) and listen to Page.frameRequestedNavigation - window.location.href cannot be redefined in Chromium.",
+  "rca_of_the_issue": "Mobile overflow: in Charges.jsx and Setup.jsx the layout is `grid lg:grid-cols-[380px_1fr]`. At <lg the grid collapses to one column, but grid items default to min-width:auto, so the wide data table (min-content > 390px) stretches the single track; the sibling form card inherits that track width (measured 1005px on Charges, 708px on Setup). On Charges the document itself scrolls horizontally (517px); on Setup main's overflow-x-hidden clips the excess instead. Fix: add min-w-0 to the grid children and keep tables inside their own overflow-x-auto wrapper."
+}

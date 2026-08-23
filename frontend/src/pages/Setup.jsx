@@ -22,7 +22,7 @@ export default function Setup() {
   const [users, setUsers] = useState([]);
 
   const [newProp, setNewProp] = useState({ name: "", address: "" });
-  const [flat, setFlat] = useState({ number: "", owner_name: "", owner_user_id: "", tenant_name: "", tenant_user_id: "" });
+  const [flat, setFlat] = useState({ property_id: "", number: "", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
   const [meter, setMeter] = useState({ flat_id: "", label: "", opening: "" });
   const [tank, setTank] = useState({ name: "", tank_type: "sump", capacity: "" });
   const [payers, setPayers] = useState({});
@@ -40,6 +40,7 @@ export default function Setup() {
   }, [propertyId]);
 
   useEffect(() => { load(); }, [load]);
+  useEffect(() => { setFlat((f) => ({ ...f, property_id: f.property_id || propertyId })); }, [propertyId]);
   useEffect(() => {
     if (property) { setPayers(property.default_payers || {}); setRecur(property.recurring_defaults || {}); }
   }, [property]);
@@ -70,14 +71,17 @@ export default function Setup() {
 
   const addFlat = async (e) => {
     e.preventDefault();
+    const target = flat.property_id || propertyId;
     try {
       await api.post("/flats", {
-        property_id: propertyId, number: flat.number, owner_name: flat.owner_name,
-        owner_user_id: flat.owner_user_id || null, tenant_name: flat.tenant_name,
-        tenant_user_id: flat.tenant_user_id || null,
+        property_id: target, number: flat.number, owner_name: flat.owner_name,
+        owner_user_id: flat.owner_user_id || null, owner_phone: flat.owner_phone,
+        tenant_name: flat.tenant_name, tenant_user_id: flat.tenant_user_id || null,
+        tenant_phone: flat.tenant_phone,
       });
-      setFlat({ number: "", owner_name: "", owner_user_id: "", tenant_name: "", tenant_user_id: "" });
-      toast.success("Flat added");
+      setFlat({ property_id: target, number: "", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
+      toast.success(`Flat added to ${properties.find((p) => p.id === target)?.name || "building"}`);
+      if (target !== propertyId) setPropertyId(target);
       load();
     } catch (err) { toast.error(errMsg(err)); }
   };
@@ -110,7 +114,8 @@ export default function Setup() {
 
   return (
     <div>
-      <PageHeader title="Building Setup" subtitle="Flats, owners, tenants, meters, tanks and charge defaults." />
+      <PageHeader title="Building Setup"
+                  subtitle={property ? `${property.name}${property.address ? ` · ${property.address}` : ""} — flats, owners, tenants, meters, tanks and charge defaults.` : "Flats, owners, tenants, meters, tanks and charge defaults."} />
 
       <Tabs defaultValue={properties.length ? "flats" : "building"}>
         <TabsList className="h-auto flex-wrap bg-transparent p-0 gap-2 mb-6">
@@ -164,9 +169,19 @@ export default function Setup() {
         </TabsContent>
 
         <TabsContent value="flats">
-          <div className="grid lg:grid-cols-[380px_1fr] gap-6">
+          <div className="grid lg:grid-cols-[380px_1fr] gap-6 [&>*]:min-w-0">
             <Card title="Add flat" testId="add-flat-card">
               <form onSubmit={addFlat} className="space-y-4">
+                <div>
+                  <Label className="label-caps">Building</Label>
+                  <Select value={flat.property_id || propertyId} onValueChange={(v) => setFlat({ ...flat, property_id: v })}>
+                    <SelectTrigger className="mt-2 h-11" data-testid="flat-property-select"><SelectValue placeholder="Select building" /></SelectTrigger>
+                    <SelectContent>
+                      {properties.map((p) => <SelectItem key={p.id} value={p.id} data-testid={`flat-property-option-${p.id}`}>{p.name}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-slate-500 mt-1">This flat will belong to the selected building.</p>
+                </div>
                 <div>
                   <Label className="label-caps">Flat number</Label>
                   <Input className="mt-2 h-11" required data-testid="flat-number-input"
@@ -176,6 +191,12 @@ export default function Setup() {
                   <Label className="label-caps">Owner name</Label>
                   <Input className="mt-2 h-11" required data-testid="flat-owner-input"
                          value={flat.owner_name} onChange={(e) => setFlat({ ...flat, owner_name: e.target.value })} />
+                </div>
+                <div>
+                  <Label className="label-caps">Owner phone (for WhatsApp / SMS)</Label>
+                  <Input className="mt-2 h-11 mono" type="tel" inputMode="tel" data-testid="flat-owner-phone-input"
+                         placeholder="9876543210"
+                         value={flat.owner_phone} onChange={(e) => setFlat({ ...flat, owner_phone: e.target.value })} />
                 </div>
                 <div>
                   <Label className="label-caps">Owner login (optional)</Label>
@@ -195,6 +216,11 @@ export default function Setup() {
                          value={flat.tenant_name} onChange={(e) => setFlat({ ...flat, tenant_name: e.target.value })} />
                 </div>
                 <div>
+                  <Label className="label-caps">Tenant phone</Label>
+                  <Input className="mt-2 h-11 mono" type="tel" inputMode="tel" data-testid="flat-tenant-phone-input"
+                         value={flat.tenant_phone} onChange={(e) => setFlat({ ...flat, tenant_phone: e.target.value })} />
+                </div>
+                <div>
                   <Label className="label-caps">Tenant login (optional)</Label>
                   <Select value={flat.tenant_user_id} onValueChange={(v) => setFlat({ ...flat, tenant_user_id: v === "none" ? "" : v })}>
                     <SelectTrigger className="mt-2 h-11" data-testid="flat-tenant-user-select"><SelectValue placeholder="No login" /></SelectTrigger>
@@ -211,16 +237,32 @@ export default function Setup() {
                 </Button>
               </form>
             </Card>
-            <Card title={`Flats (${flats.length})`} testId="flats-table-card">
+            <Card title={`Flats in ${property?.name || "this building"} (${flats.length})`} testId="flats-table-card">
               {!flats.length ? <Empty testId="flats-empty" title="No flats yet" hint="Each flat is one equal share of common costs." /> : (
                 <div className="overflow-x-auto">
                   <table className="data-table">
-                    <thead><tr><th>Flat</th><th>Owner</th><th>Tenant</th><th className="text-right">Meters</th><th /></tr></thead>
+                    <thead><tr><th>Building / Flat</th><th>Owner</th><th>Owner phone</th><th>Tenant</th><th className="text-right">Meters</th><th /></tr></thead>
                     <tbody>
                       {flats.map((f) => (
                         <tr key={f.id} data-testid={`flat-config-row-${f.number}`}>
-                          <td className="font-semibold">{f.number}</td>
+                          <td className="font-semibold">
+                            <span className="text-slate-400 font-normal">{property?.name} / </span>{f.number}
+                          </td>
                           <td>{f.owner_name}</td>
+                          <td className="mono text-slate-500">
+                            <Input className="h-9 w-32 mono" type="tel" inputMode="tel" placeholder="Add phone"
+                                   data-testid={`flat-phone-edit-${f.number}`}
+                                   defaultValue={f.owner_phone || ""}
+                                   onBlur={async (e) => {
+                                     const v = e.target.value;
+                                     if (v === (f.owner_phone || "")) return;
+                                     try {
+                                       await api.put(`/flats/${f.id}`, { ...f, owner_phone: v });
+                                       toast.success(`Phone saved for flat ${f.number}`);
+                                       load();
+                                     } catch (err) { toast.error(errMsg(err)); }
+                                   }} />
+                          </td>
                           <td className="text-slate-500">{f.tenant_name || "—"}</td>
                           <td className="num">{meters.filter((m) => m.flat_id === f.id).length}</td>
                           <td className="text-right">
@@ -238,7 +280,7 @@ export default function Setup() {
         </TabsContent>
 
         <TabsContent value="meters">
-          <div className="grid lg:grid-cols-[380px_1fr] gap-6">
+          <div className="grid lg:grid-cols-[380px_1fr] gap-6 [&>*]:min-w-0">
             <Card title="Register water meter" testId="add-meter-card">
               <form onSubmit={addMeter} className="space-y-4">
                 <div>
@@ -268,12 +310,12 @@ export default function Setup() {
             <Card title={`Meters (${meters.length})`} testId="meters-table-card">
               {!meters.length ? <Empty testId="meters-empty" title="No meters" hint="Multiple meters per flat are allowed; consumption is consolidated per flat." /> : (
                 <table className="data-table">
-                  <thead><tr><th>Label</th><th>Flat</th><th className="text-right">Opening</th><th /></tr></thead>
+                  <thead><tr><th>Label</th><th>Building / Flat</th><th className="text-right">Opening</th><th /></tr></thead>
                   <tbody>
                     {meters.map((m) => (
                       <tr key={m.id} data-testid={`meter-row-${m.label}`}>
                         <td className="font-semibold">{m.label}</td>
-                        <td>{flats.find((f) => f.id === m.flat_id)?.number || "—"}</td>
+                        <td><span className="text-slate-400">{property?.name} / </span>{flats.find((f) => f.id === m.flat_id)?.number || "—"}</td>
                         <td className="num">{m.opening}</td>
                         <td className="text-right">
                           <button onClick={() => del("/meters", m.id)} data-testid={`delete-meter-${m.label}`}
@@ -289,7 +331,7 @@ export default function Setup() {
         </TabsContent>
 
         <TabsContent value="tanks">
-          <div className="grid lg:grid-cols-[380px_1fr] gap-6">
+          <div className="grid lg:grid-cols-[380px_1fr] gap-6 [&>*]:min-w-0">
             <Card title="Register tank" testId="add-tank-card">
               <form onSubmit={addTank} className="space-y-4">
                 <div>
