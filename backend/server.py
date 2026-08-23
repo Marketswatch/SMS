@@ -748,6 +748,54 @@ async def annual_export(property_id: str, year: int, format: str = Query("csv"),
                              headers={"Content-Disposition": f'attachment; filename="annual-{year}.pdf"'})
 
 
+@api.get("/overview")
+async def combined_overview(month: str, user: dict = Depends(admin_user)):
+    """Maintenance dues and rent income for one month, side by side."""
+    props = await db.properties.find().sort("created_at", 1).to_list(200)
+    buildings, m_tot = [], {"billable": 0.0, "collected": 0.0, "fronted": 0.0, "outstanding": 0.0, "owed": 0.0}
+    for p in props:
+        pid = str(p["_id"])
+        period = await db.periods.find_one({"property_id": pid, "month": month})
+        if not period:
+            continue
+        stmt = period.get("snapshot") if period.get("status") == "locked" and period.get("snapshot") \
+            else await build_statement(pid, month)
+        t = stmt["totals"]
+        buildings.append({
+            "property_id": pid, "name": p.get("name"), "status": period.get("status", "open"),
+            "flats": t["flat_count"], "billable": t["billable_total"], "collected": t["total_received"],
+            "fronted": t["total_contributions"], "outstanding": t["total_owes"], "owed": t["total_owed"],
+            "water_spend": t["total_water_spend"], "recurring": t["recurring_total"],
+            "maintenance": t["maintenance_total"],
+        })
+        m_tot["billable"] += t["billable_total"]
+        m_tot["collected"] += t["total_received"]
+        m_tot["fronted"] += t["total_contributions"]
+        m_tot["outstanding"] += t["total_owes"]
+        m_tot["owed"] += t["total_owed"]
+
+    rent_router_roll = await rentals.rent_roll_for(db, month)
+    r = rent_router_roll["totals"]
+    return {
+        "month": month,
+        "maintenance": {"buildings": buildings, "totals": {k: round(v, 2) for k, v in m_tot.items()}},
+        "rentals": {"rows": rent_router_roll["rows"], "totals": r,
+                    "building_tally": rent_router_roll["building_tally"]},
+        "combined": {
+            "money_in": round(m_tot["collected"] + r["rent_collected"], 2),
+            "money_out": round(r["expenses"], 2),
+            "still_to_collect": round(m_tot["outstanding"] + r["pending"], 2),
+            "maintenance_outstanding": round(m_tot["outstanding"], 2),
+            "rent_pending": round(r["pending"], 2),
+            "rent_collected": r["rent_collected"],
+            "maintenance_collected": round(m_tot["collected"], 2),
+            "deposits_held": r["deposit_held"],
+            "paid_on_behalf_of_buildings": r["on_behalf_of_building"],
+            "lost_rent_vacancy": r.get("lost_rent", 0),
+        },
+    }
+
+
 # ---------------------------------------------------------------- month reset
 @api.post("/periods/reset")
 async def reset_month(property_id: str, month: str, user: dict = Depends(admin_user)):

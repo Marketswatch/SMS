@@ -12,6 +12,7 @@ import Charges from "@/pages/Charges";
 import Reconcile from "@/pages/Reconcile";
 import MIS from "@/pages/MIS";
 import Annual from "@/pages/Annual";
+import Overview from "@/pages/Overview";
 import MyDues from "@/pages/MyDues";
 import RentDashboard from "@/pages/rentals/RentDashboard";
 import Units from "@/pages/rentals/Units";
@@ -66,6 +67,7 @@ export default function App() {
             <Route path="/reconcile" element={<Gate adminOnly><Reconcile /></Gate>} />
             <Route path="/mis" element={<Gate adminOnly><MIS /></Gate>} />
             <Route path="/annual" element={<Gate adminOnly><Annual /></Gate>} />
+            <Route path="/overview" element={<Gate adminOnly><Overview /></Gate>} />
             <Route path="/my-dues" element={<MyDues />} />
             <Route path="/rentals" element={<Gate adminOnly><RentDashboard /></Gate>} />
             <Route path="/rentals/units" element={<Gate adminOnly><Units /></Gate>} />

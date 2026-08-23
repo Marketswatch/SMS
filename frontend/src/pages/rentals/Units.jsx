@@ -13,7 +13,7 @@ import { money } from "@/lib/format";
 const blank = {
   name: "", kind: "flat", address: "", ownership: "own", owner_name: "", building_property_id: "",
   rent_amount: "", rent_due_day: "5", deposit_amount: "", tenant_name: "", tenant_phone: "",
-  lease_start: "", lease_end: "", status: "active", notes: "",
+  lease_start: "", lease_end: "", vacant_since: "", status: "active", notes: "",
 };
 
 export default function Units() {
@@ -175,6 +175,14 @@ export default function Units() {
                 </SelectContent>
               </Select>
             </div>
+            {form.status === "vacant" && (
+              <div>
+                <Label className="label-caps">Vacant since</Label>
+                <Input type="date" className="mt-2 h-11" data-testid="unit-vacant-since-input"
+                       value={form.vacant_since} onChange={(e) => setForm({ ...form, vacant_since: e.target.value })} />
+                <p className="text-xs text-slate-500 mt-1">Used to work out idle days and rent forgone.</p>
+              </div>
+            )}
             <Button type="submit" data-testid="save-unit-btn" className="w-full h-12 bg-slate-900 text-white">
               <Plus className="w-4 h-4 mr-2" /> {editId ? "Save changes" : "Add property"}
             </Button>
@@ -185,9 +193,9 @@ export default function Units() {
           {!units.length ? <Empty testId="units-empty" title="No properties yet" hint="Add your first rental unit on the left." /> : (
             <div className="overflow-x-auto">
               <table className="data-table">
-                <thead><tr><th>Name</th><th>Type</th><th>Ownership</th><th>Tenant</th>
-                  <th className="text-right">Rent</th><th className="text-right">Deposit</th>
-                  <th>Lease</th><th>Status</th><th /></tr></thead>
+                  <thead><tr><th>Name</th><th>Type</th><th>Ownership</th><th>Tenant</th>
+                    <th className="text-right">Rent</th><th className="text-right">Deposit</th>
+                    <th>Lease</th><th>Status</th><th /></tr></thead>
                 <tbody>
                   {units.map((u) => (
                     <tr key={u.id} data-testid={`unit-row-${u.name}`}>
@@ -198,7 +206,12 @@ export default function Units() {
                       <td className="num">{money(u.rent_amount)}</td>
                       <td className="num">{money(u.deposit_amount)}</td>
                       <td className="text-slate-500 text-xs">{u.lease_start || "—"} → {u.lease_end || "—"}</td>
-                      <td className="capitalize">{u.status}</td>
+                      <td className="capitalize">{u.status}
+                        {u.status === "vacant" && u.vacant_since && (
+                          <div className="text-[11px] text-slate-500 mono normal-case"
+                               data-testid={`unit-vacant-since-${u.name}`}>since {u.vacant_since}</div>
+                        )}
+                      </td>
                       <td className="text-right">
                         <div className="flex justify-end gap-2">
                           <button onClick={() => edit(u)} data-testid={`edit-unit-${u.name}`}

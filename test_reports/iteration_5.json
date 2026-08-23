@@ -1,0 +1,53 @@
+{
+  "summary": "Iteration-5 full test of the three new features (rent receipt PDFs, combined overview, vacancy tracking) plus the requested light regression. Backend: new pytest suite /app/backend/tests/test_iter5_receipts_overview_vacancy.py — 30/30 passing (receipt PDF per kind with title/receipt-no/property/tenant/month/date/mode/amount, rent-receipt monthly-rent/paid/balance + 'Nil' when fully paid, 404 unknown id, 400 bad id, 403 resident; /api/overview cross-checked figure-by-figure against /api/statement per building and /api/rentals/rent-roll, month validation 400/422, resident 403, unauthenticated 401; vacancy vacant_since/vacant_days/lost_rent + totals, vacant billing 0, lease_end fallback, no-date 0, garbage date no-500, future date clamped, CSV+PDF vacancy summary lines). Frontend (1920x1080 + 390x844): Combined Overview reachable via nav-overview in BOTH workspaces and mobile drawer, own month picker, 4 stat cards, both tables with totals rows, on-behalf tally card, row click-through to /mis and /rentals; receipt-btn downloads a valid 2.3KB PDF with success toast and receipt-share opens wa.me with property/month/amount/date/mode; vacancy-alert, rent-stat-vacancy and inline vacant-days-{name} all correct; Units status=vacant reveals unit-vacant-since-input which persists and drives the rent roll; Reports vacancy card + CSV/PDF buttons render; no page-shell horizontal overflow on mobile; resident is blocked from /overview (redirected to /my-dues, nav hidden).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/overview", "issue": "Buildings without a period document for the requested month are silently skipped, so a building that has maintenance activity but no period row never appears in the maintenance table (UI then shows 'No building period for this month.'). Acceptable by design but worth confirming."},
+      {"endpoint": "GET /api/rentals/rent-roll", "issue": "Vacancy metrics are not month-scoped: vacant_days/lost_rent are always computed as (today - vacant_since) using the unit's CURRENT status, so requesting a past month returns the same cumulative loss (e.g. July 2026 rent roll and Overview both reported the same Rs.98,554.53 as August). Consider clamping the vacancy window to the requested month."},
+      {"endpoint": "GET /api/rentals/rent-roll", "issue": "A unit whose lease_start is in the future is reported status='vacant' for earlier months even though it was never vacant; it then inflates totals.vacant / the vacancy-alert count while contributing 0 vacant_days, so the alert count can disagree with the rows listed in the Reports vacancy card (e.g. '2 vacant properties' but only 1 row with a since-date)."},
+      {"endpoint": "GET /api/rentals/rent-roll", "issue": "Row payload has no rent_amount, which is why the Reports vacancy card cannot show the monthly rent of a vacant unit (see frontend bug)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "RentReport.jsx — Vacancy card", "issue": "'Monthly rent' column always renders Rs.0.00 for vacant units because it uses money(r.rent_due || 0) and rent_due is 0 by definition for a vacant unit (verified: QA unit with rent 30,000 showed Rs.0.00 while Rent forgone Rs.98,554.53 rendered correctly). Expose rent_amount on the rent-roll row and use it here (the totals cell for that column is also left blank).", "selector": "[data-testid=\"report-vacancy-card\"]", "priority": "MEDIUM"},
+      {"component": "Overview.jsx — Deposits held card", "issue": "Sub-line 'Rs.x lost to vacancy' is shown for historical months too because lost_rent is not month-scoped (July 2026 showed the same figure as August). Cosmetic consequence of the backend issue above.", "selector": "[data-testid=\"ov-stat-deposits\"]", "priority": "LOW"},
+      {"component": "Units.jsx — properties table", "issue": "The properties table shows only the 'Vacant' status pill; the newly captured 'vacant since' date is not surfaced anywhere on that page (has to be re-opened in edit to see it). Nice-to-have column.", "selector": "[data-testid=\"unit-row-{name}\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Combined Overview (desktop)", "issues": ["Page keeps the maintenance header property/period switchers alongside its own month picker, which can read as two conflicting month controls (overview-month-input is the one that drives the data) — consider hiding or visually de-emphasising the header period switcher on this route."]},
+      {"screen": "Rentals forms (Rent & Deposits, Properties)", "issues": ["Date inputs use the native browser date picker (input type=date) rather than the shadcn calendar; pre-existing app-wide pattern, flagged only for consistency."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter5_receipts_overview_vacancy.py",
+    "/app/backend/tests/qa_iter5_seed.py",
+    "/app/test_reports/pytest/iter5_results.xml",
+    "/app/test_reports/pytest/iter5_final.xml"
+  ],
+  "action_items": [
+    "Fix Reports vacancy card 'Monthly rent' column (add rent_amount to the rent-roll row and render it; also fill the totals cell).",
+    "Decide whether vacancy days/lost rent should be scoped to the selected month instead of always being 'today minus vacant_since' (currently past months show today's cumulative loss).",
+    "Consider not counting future-lease (never-occupied) units as 'vacant' so the vacancy-alert count matches the vacancy table rows.",
+    "Test-hygiene (owner: dev/next tester): tests/test_iter4_rentals_annual.py calls POST /api/rentals/demo/seed, which re-creates the 3 demo rental units inside the user's live preview data — gate it or clean up after; tests/test_media_notify.py::TestStatementNotify asserts hard-coded building totals (6500/8600) and fails whenever a sibling test concurrently adds a charge or leaves one behind."
+  ],
+  "critical_code_review_comments": [
+    "rentals.build_rent_roll(): the vacancy block keys off u['status'] (a point-in-time field) inside a month-parameterised report — historical rent rolls therefore report present-day vacancy loss. Snapshot or clamp to month_bounds(month).",
+    "rentals.build_rent_roll(): loads ALL collections (to_list(5000)) on every call just to compute deposit_held; an aggregation pipeline or a per-unit query would scale better.",
+    "server.combined_overview(): calls build_statement per property in a serial loop; fine at 2 buildings but consider asyncio.gather when building counts grow.",
+    "rentals.py is at 542 lines with the CSV/PDF exporters and the receipt builder inline — split reporting/pdf helpers into their own module before it crosses the 700-line limit."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter5_receipts_overview_vacancy.py (new)",
+    "/app/backend/tests/qa_iter5_seed.py (new throwaway seed/cleanup helper)"
+  ],
+  "success_rate": {"backend": "100% (30/30 new iteration-5 tests; 113/114 legacy tests, the single failure is a racy hard-coded-total legacy assertion that passes in isolation)", "frontend": "97% (all iteration-5 flows pass; 1 real UI bug — Reports vacancy 'Monthly rent' column)"},
+  "seed_data_creation": "All throwaway records were prefixed 'QA ' and deleted: QA Receipt Flat / QA Vacant Shop / QA UI Flat / QA UI Vacant / QA UI Vac2 (+ their collections and one on-behalf-of-building expense). IMPORTANT restoration work done: (a) running the legacy suite re-seeded the 3 demo rental units (Sunrise 101 (own), MG Road Shop, Whitefield House) into the user's data — I deleted them so only the user's 'srinithi' unit remains; (b) a leftover 'TEST_repair media' Rs.100 maintenance charge (from test_media_notify) was removed from Sunrise Residency. /api/overview for 2026-08 is now back to the developer-verified money_in 3800.0 / still_to_collect 10139.07, and the user's buildings, flats, periods, tankers, charges and payments were not otherwise touched.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@societyhub.com / admin123 (super_admin), tenant1@societyhub.com / demo123 (resident) — /app/memory/test_credentials.md present and valid; mode is localStorage 'sh_mode' ('maintenance' | 'rentals').",
+  "context_for_next_testing_agent": "New regression suite: /app/backend/tests/test_iter5_receipts_overview_vacancy.py (contains a dependency-free PDF text extractor pdf_text() that ASCII85+Flate-decodes reportlab streams — reuse it, no pypdf is installed). Run pytest per-file rather than the whole tests/ dir: the suites share one live preview DB and the -n 2 loadscope run produced cross-test interference (iter4 lease-expiry/on-behalf-tally, media/notify uploads) that all pass when run in isolation. Do NOT run the whole dir without cleaning up afterwards: tests/test_iter4_rentals_annual.py re-seeds 3 demo rental units into the user's live data and test_media_notify leaves TEST_ charges behind on Sunrise Residency (both restored by me this iteration). Playbook auth checks re-verified: bcrypt $2b$ hash format, httpOnly cookie on login, brute-force lockout, seed_admin update — all pass; the only CORS failure is the edge proxy rewriting Access-Control-Allow-Origin to '*' (localhost:8001 correctly returns the explicit origin + allow-credentials: true), a known non-issue.",
+  "rca_of_the_issue": "Reports vacancy 'Monthly rent' = Rs.0.00: RentReport.jsx line ~95 renders money(r.rent_due || 0), but build_rent_roll() sets rent_due = 0 whenever lease_active() is false, which is always true for a vacant unit; the row never carries the unit's rent_amount, so the column has no source of truth. Fix at the API (add rent_amount to each rent-roll row) and switch the cell to it. Repro: create a unit with status=vacant, rent 30000, vacant_since 100 days ago -> /rentals/report vacancy card shows idle days 100 and forgone Rs.98,554.53 but monthly rent Rs.0.00."
+}

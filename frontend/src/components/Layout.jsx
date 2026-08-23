@@ -1,8 +1,8 @@
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate, useLocation } from "react-router-dom";
 import { useState } from "react";
 import {
   LayoutDashboard, Building2, Droplets, Receipt, Scale, FileSpreadsheet, LogOut, Menu, X, Lock, User,
-  CalendarRange, Home, Wallet, ReceiptText, ArrowLeftRight,
+  CalendarRange, Home, Wallet, ReceiptText, ArrowLeftRight, LayoutGrid,
 } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 import { useApp } from "@/context/AppContext";
@@ -18,6 +18,7 @@ const maintenanceNav = [
   { to: "/reconcile", label: "Reconciliation", icon: Scale, id: "reconcile" },
   { to: "/mis", label: "MIS Report", icon: FileSpreadsheet, id: "mis" },
   { to: "/annual", label: "Annual Statement", icon: CalendarRange, id: "annual" },
+  { to: "/overview", label: "Combined Overview", icon: LayoutGrid, id: "overview" },
 ];
 
 const rentalNav = [
@@ -26,6 +27,7 @@ const rentalNav = [
   { to: "/rentals/collections", label: "Rent & Deposits", icon: Wallet, id: "rent-collections" },
   { to: "/rentals/expenses", label: "Bills Paid", icon: ReceiptText, id: "rent-expenses" },
   { to: "/rentals/report", label: "Reports", icon: FileSpreadsheet, id: "rent-report" },
+  { to: "/overview", label: "Combined Overview", icon: LayoutGrid, id: "overview" },
 ];
 
 export default function Layout() {
@@ -36,6 +38,7 @@ export default function Layout() {
   const nav = useNavigate();
 
   const rentals = mode === "rentals";
+  const onOverview = useLocation().pathname === "/overview";
   const items = !isAdmin
     ? [{ to: "/my-dues", label: "My Dues", icon: User, id: "my-dues" }]
     : rentals ? rentalNav : maintenanceNav;
@@ -75,7 +78,7 @@ export default function Layout() {
             {rentals ? (
               <Input type="month" value={rentMonth} onChange={(e) => setRentMonth(e.target.value)}
                      data-testid="rent-month-switcher" className="h-9 w-[130px] sm:w-[160px] text-sm mono" />
-            ) : (
+            ) : onOverview ? null : (
               <>
                 {properties.length > 0 && (
                   <Select value={propertyId} onValueChange={setPropertyId}>

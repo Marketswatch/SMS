@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
-import { Plus, Trash2, Pencil, X, Wallet } from "lucide-react";
+import { Plus, Trash2, Pencil, X, Wallet, FileText, MessageCircle } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
 import { useApp } from "@/context/AppContext";
 import { useRentRoll } from "@/hooks/useRentRoll";
@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { money, monthLabel } from "@/lib/format";
+import { openWhatsApp } from "@/lib/notify";
 
 const KINDS = [
   { value: "rent", label: "Rent received" },
@@ -56,7 +57,31 @@ export default function Collections() {
   };
 
   const unitName = (id) => units.find((u) => u.id === id)?.name || "—";
+  const unitOf = (id) => units.find((u) => u.id === id);
   const t = roll?.totals;
+
+  const receipt = async (r) => {
+    try {
+      const res = await api.get(`/rentals/collections/${r.id}/receipt`, { responseType: "blob" });
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `receipt-${unitName(r.unit_id).replace(/\s+/g, "-")}-${r.month}.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success("Receipt downloaded");
+    } catch (e) { toast.error(errMsg(e)); }
+  };
+
+  const shareReceipt = (r) => {
+    const u = unitOf(r.unit_id);
+    const label = KINDS.find((k) => k.value === r.kind)?.label || r.kind;
+    const msg = [`${u?.name || "Property"} — ${monthLabel(r.month)}`,
+                 `${label}: Rs.${Number(r.amount).toFixed(2)}`,
+                 `Received on ${r.date} via ${String(r.mode).toUpperCase()}`,
+                 "Thank you. A signed receipt PDF follows."].join("\n");
+    openWhatsApp(u?.tenant_phone, msg);
+  };
 
   return (
     <div>
@@ -150,6 +175,14 @@ export default function Collections() {
                       <td className="text-slate-500">{r.notes || "—"}</td>
                       <td className="text-right">
                         <div className="flex justify-end gap-2">
+                          <button onClick={() => receipt(r)} data-testid={`receipt-btn-${r.id}`}
+                                  title="Download printable receipt"
+                                  className="text-slate-400 hover:text-slate-900"><FileText className="w-4 h-4" /></button>
+                          {unitOf(r.unit_id)?.tenant_phone && (
+                            <button onClick={() => shareReceipt(r)} data-testid={`receipt-share-${r.id}`}
+                                    title="Send receipt details on WhatsApp"
+                                    className="text-slate-400 hover:text-emerald-700"><MessageCircle className="w-4 h-4" /></button>
+                          )}
                           <button onClick={() => { setEditId(r.id); setForm({ ...r, amount: String(r.amount) }); }}
                                   data-testid={`edit-collection-${r.id}`}
                                   className="text-slate-400 hover:text-slate-900"><Pencil className="w-4 h-4" /></button>

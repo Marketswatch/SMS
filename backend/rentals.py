@@ -29,6 +29,15 @@ def r2(x):
 
 MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
 
+_build_rent_roll = None
+
+
+async def rent_roll_for(db, month: str) -> dict:
+    """Reuse the rent-roll builder from outside the router (combined overview)."""
+    if _build_rent_roll is None:
+        raise RuntimeError("rentals router not initialised")
+    return await _build_rent_roll(month)
+
 
 def valid_month(month: str) -> str:
     if not month or not MONTH_RE.match(month):
@@ -59,6 +68,7 @@ class UnitIn(BaseModel):
     tenant_phone: str = ""
     lease_start: str = ""
     lease_end: str = ""
+    vacant_since: str = ""
     status: str = "active"
     notes: str = ""
 
@@ -227,16 +237,21 @@ def make_router(db):
 
     # --------------------------------------------------------------- rent roll
     def lease_active(u: dict, month: str) -> bool:
-        if u.get("status") != "active":
-            return False
-        start, nxt = month_bounds(month)
-        last_day = nxt.fromordinal(nxt.toordinal() - 1)
+        return unit_state(u, month) == "active"
+
+    def unit_state(u: dict, month: str) -> str:
+        """active | upcoming (lease starts later) | ended | vacant"""
+        _, nxt = month_bounds(month)
+        last_day = str(date.fromordinal(nxt.toordinal() - 1))
+        first_day = str(month_bounds(month)[0])
         ls, le = u.get("lease_start") or "", u.get("lease_end") or ""
-        if ls and ls > str(last_day):
-            return False
-        if le and le < str(start):
-            return False
-        return True
+        if ls and ls > last_day:
+            return "upcoming"
+        if u.get("status") != "active":
+            return "vacant"
+        if le and le < first_day:
+            return "ended"
+        return "active"
 
     async def build_rent_roll(month: str) -> dict:
         valid_month(month)
@@ -258,11 +273,14 @@ def make_router(db):
             deposit_out = sum(float(c["amount"]) for c in all_cols
                               if c["unit_id"] == uid and c["kind"] in ("deposit_refund", "deposit_deduction"))
             active = lease_active(u, month)
-            rent_due = float(u.get("rent_amount", 0) or 0) if active else 0.0
+            state = unit_state(u, month)
+            rent_amount = float(u.get("rent_amount", 0) or 0)
+            rent_due = rent_amount if active else 0.0
             pending = rent_due - rent_collected
             due_day = int(u.get("rent_due_day", 5) or 5)
             due_date = f"{month}-{min(max(due_day, 1), 28):02d}"
-            status = ("vacant" if not active else
+            status = ("upcoming" if state == "upcoming" else
+                      "vacant" if state in ("vacant", "ended") else
                       "paid" if pending <= 0 else
                       "overdue" if due_date < today else "pending")
             expense_total = sum(float(e["amount"]) for e in uexp)
@@ -272,11 +290,24 @@ def make_router(db):
             window_end = str(date(nxt.year + (nxt.month == 12), (nxt.month % 12) + 1, 1))
             expiring = bool(lease_end) and today <= lease_end < window_end
 
+            vacant_since = u.get("vacant_since") or (lease_end if status == "vacant" else "")
+            vacant_days, lost_rent = 0, 0.0
+            if status == "vacant" and vacant_since:
+                # Scope the idle window to the selected month so past months don't show today's figure.
+                month_last = str(date.fromordinal(nxt.toordinal() - 1))
+                end_ref = min(today, month_last)
+                try:
+                    vacant_days = max((date.fromisoformat(end_ref) - date.fromisoformat(vacant_since)).days, 0)
+                    lost_rent = r2(rent_amount * vacant_days / 30.44)
+                except ValueError:
+                    vacant_days, lost_rent = 0, 0.0
+
             rows.append({
                 "unit_id": uid, "name": u.get("name"), "kind": u.get("kind"),
                 "ownership": u.get("ownership"), "owner_name": u.get("owner_name") or "",
                 "building": props.get(u.get("building_property_id") or "", ""),
                 "tenant_name": u.get("tenant_name") or "", "tenant_phone": u.get("tenant_phone") or "",
+                "rent_amount": r2(rent_amount),
                 "rent_due": r2(rent_due), "rent_collected": r2(rent_collected),
                 "pending": r2(max(pending, 0)), "advance": r2(max(-pending, 0)),
                 "due_date": due_date, "status": status,
@@ -286,6 +317,7 @@ def make_router(db):
                 "net_to_owner": r2(rent_collected - expense_total),
                 "lease_start": u.get("lease_start") or "", "lease_end": lease_end,
                 "lease_expiring_soon": expiring,
+                "vacant_since": vacant_since, "vacant_days": vacant_days, "lost_rent": lost_rent,
             })
 
         building_tally = {}
@@ -300,8 +332,9 @@ def make_router(db):
 
         totals = {
             "unit_count": len(rows),
-            "occupied": sum(1 for r in rows if r["status"] != "vacant"),
+            "occupied": sum(1 for r in rows if r["status"] not in ("vacant", "upcoming")),
             "vacant": sum(1 for r in rows if r["status"] == "vacant"),
+            "upcoming": sum(1 for r in rows if r["status"] == "upcoming"),
             "rent_due": r2(sum(r["rent_due"] for r in rows)),
             "rent_collected": r2(sum(r["rent_collected"] for r in rows)),
             "pending": r2(sum(r["pending"] for r in rows)),
@@ -312,6 +345,8 @@ def make_router(db):
             "net_to_owner": r2(sum(r["net_to_owner"] for r in rows)),
             "owned_units": sum(1 for r in rows if r["ownership"] == "own"),
             "managed_units": sum(1 for r in rows if r["ownership"] == "managed"),
+            "vacant_days": sum(r["vacant_days"] for r in rows),
+            "lost_rent": r2(sum(r["lost_rent"] for r in rows)),
         }
         return {"month": month, "rows": rows, "totals": totals,
                 "building_tally": list(building_tally.values())}
@@ -319,6 +354,9 @@ def make_router(db):
     @router.get("/rent-roll")
     async def rent_roll(month: str, user: dict = Depends(admin_user)):
         return await build_rent_roll(month)
+
+    global _build_rent_roll
+    _build_rent_roll = build_rent_roll
 
     @router.get("/export")
     async def export_rent_roll(month: str, format: str = Query("csv"), user: dict = Depends(admin_user)):
@@ -343,6 +381,8 @@ def make_router(db):
                         "Pending", t["pending"], "Overdue", t["overdue"]])
             w.writerow(["Deposits held", t["deposit_held"], "Expenses", t["expenses"],
                         "On behalf of buildings", t["on_behalf_of_building"], "Net to owners", t["net_to_owner"]])
+            w.writerow(["Vacant units", t["vacant"], "Idle days", t["vacant_days"],
+                        "Rent forgone to vacancy", t["lost_rent"]])
             w.writerow([])
             w.writerow(head)
             for r in data["rows"]:
@@ -368,7 +408,8 @@ def make_router(db):
                  Paragraph(f"Period: {month}", styles["Normal"]), Spacer(1, 10)]
         summary = [["Units", t["unit_count"], "Occupied", t["occupied"], "Vacant", t["vacant"]],
                    ["Rent due", t["rent_due"], "Collected", t["rent_collected"], "Pending", t["pending"]],
-                   ["Deposits held", t["deposit_held"], "Expenses", t["expenses"], "Net to owners", t["net_to_owner"]]]
+                   ["Deposits held", t["deposit_held"], "Expenses", t["expenses"], "Net to owners", t["net_to_owner"]],
+                   ["Vacant units", t["vacant"], "Idle days", t["vacant_days"], "Rent forgone", t["lost_rent"]]]
         st = Table(summary, hAlign="LEFT")
         st.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
                                 ("FONTSIZE", (0, 0), (-1, -1), 8)]))
@@ -398,10 +439,69 @@ def make_router(db):
         return StreamingResponse(buf, media_type="application/pdf",
                                  headers={"Content-Disposition": f'attachment; filename="rent-roll-{month}.pdf"'})
 
+    @router.get("/collections/{cid}/receipt")
+    async def collection_receipt(cid: str, user: dict = Depends(admin_user)):
+        col = await db.rent_collections.find_one({"_id": oid(cid)})
+        if not col:
+            raise HTTPException(status_code=404, detail="Entry not found")
+        unit = await db.rental_units.find_one({"_id": oid(col["unit_id"])})
+        if not unit:
+            raise HTTPException(status_code=404, detail="Property not found")
+        receipt_no = f"RCPT-{col['month'].replace('-', '')}-{str(col['_id'])[-6:].upper()}"
+
+        cols = await db.rent_collections.find({"unit_id": col["unit_id"], "month": col["month"],
+                                               "kind": "rent"}).to_list(500)
+        paid_this_month = r2(sum(float(c["amount"]) for c in cols))
+        rent = float(unit.get("rent_amount", 0) or 0)
+        balance = r2(rent - paid_this_month) if col["kind"] == "rent" else 0.0
+
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib import colors
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+
+        labels = {"rent": "Rent Receipt", "deposit": "Security Deposit Receipt",
+                  "deposit_refund": "Deposit Refund Voucher", "deposit_deduction": "Deposit Deduction Note"}
+        buf = io.BytesIO()
+        doc = SimpleDocTemplate(buf, pagesize=A4, title=receipt_no)
+        styles = getSampleStyleSheet()
+        story = [Paragraph(labels.get(col["kind"], "Receipt"), styles["Title"]),
+                 Paragraph(f"Receipt no. {receipt_no}", styles["Normal"]), Spacer(1, 16)]
+        detail = [["Property", unit.get("name", "")],
+                  ["Address", unit.get("address", "") or "—"],
+                  ["Tenant", unit.get("tenant_name", "") or "—"],
+                  ["Received by", "Self (owner)" if unit.get("ownership") == "own"
+                   else f"{user.get('name')} on behalf of {unit.get('owner_name') or 'owner'}"],
+                  ["For the month of", col["month"]],
+                  ["Date received", col.get("date", "")],
+                  ["Payment mode", str(col.get("mode", "")).upper()],
+                  ["Amount", f"Rs. {r2(col['amount']):,.2f}"]]
+        if col["kind"] == "rent":
+            detail += [["Monthly rent", f"Rs. {rent:,.2f}"],
+                       ["Total paid this month", f"Rs. {paid_this_month:,.2f}"],
+                       ["Balance", "Nil" if balance <= 0 else f"Rs. {balance:,.2f}"]]
+        if col.get("notes"):
+            detail.append(["Notes", col["notes"]])
+        tbl = Table(detail, colWidths=[150, 320], hAlign="LEFT")
+        tbl.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                                 ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F5F9")),
+                                 ("FONTSIZE", (0, 0), (-1, -1), 9),
+                                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                                 ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                                 ("TOPPADDING", (0, 0), (-1, -1), 7)]))
+        story += [tbl, Spacer(1, 26),
+                  Paragraph("This is a computer-generated receipt for the amount stated above.", styles["Normal"]),
+                  Spacer(1, 34), Paragraph("_______________________<br/>Authorised signature", styles["Normal"])]
+        doc.build(story)
+        buf.seek(0)
+        return StreamingResponse(buf, media_type="application/pdf",
+                                 headers={"Content-Disposition": f'attachment; filename="{receipt_no}.pdf"'})
+
     @router.post("/demo/seed")
     async def seed_rentals(user: dict = Depends(admin_user)):
-        if await db.rental_units.find_one({"name": "Sunrise 101 (own)"}):
-            return {"ok": True, "already": True}
+        if await db.rental_units.find_one({}):
+            return {"ok": True, "already": True,
+                    "note": "Sample data skipped — real properties already exist."}
         prop = await db.properties.find_one({"name": "Sunrise Residency"})
         pid = str(prop["_id"]) if prop else None
         month = date.today().strftime("%Y-%m")

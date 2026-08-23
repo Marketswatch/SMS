@@ -60,9 +60,19 @@ tally, rent roll with paid/pending/overdue/vacant status, owner payout report, C
 work photo gallery dialog; bulk WhatsApp/SMS reminder pass; editing of tanker and charge entries;
 annual statement per owner with month-by-month table and CSV+PDF export.
 
+### Iteration 5 — receipts, overview, vacancy
+Printable PDF receipts for every rent/deposit/refund/deduction entry (receipt number, property, tenant,
+month, mode, amount, and for rent the monthly rent / paid-to-date / balance) plus a WhatsApp share of the
+receipt details. Combined Overview screen (`/api/overview`) showing maintenance dues per building and rent
+income per property side by side with money in / money out / still to collect, reachable from both
+workspaces. Vacancy tracking: `vacant_since` per unit, idle days and rent forgone scoped to the selected
+month, vacancy alert + stat + inline per-row figures, a vacancy table in Reports and in the CSV/PDF export.
+Units whose lease starts later now report status `upcoming` rather than vacant, and demo seeding refuses to
+run once real properties exist.
+
 ## Backlog
 - P1: commission / management fee on managed rental units (explicitly deferred by user);
-  rent receipts as PDF; tenant-facing rental portal; shadcn date pickers replacing native date inputs.
+  tenant-facing rental portal; shadcn date pickers replacing native date inputs.
 - P2: async storage I/O (currently blocking `requests`); split server.py into routers;
   short-lived signed file URLs instead of `?auth=` token; penalty/interest on long-overdue owners;
   offline-first mobile entry queue.

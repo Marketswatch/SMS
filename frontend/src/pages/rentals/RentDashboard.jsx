@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Sparkles, MessageCircle, Send, AlertTriangle } from "lucide-react";
+import { Sparkles, MessageCircle, Send, AlertTriangle, Home } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
 import { useApp } from "@/context/AppContext";
 import { useRentRoll } from "@/hooks/useRentRoll";
@@ -15,6 +15,7 @@ const statusPill = {
   pending: "bg-amber-50 text-amber-800 border-amber-200",
   overdue: "bg-red-50 text-red-700 border-red-200",
   vacant: "bg-slate-50 text-slate-500 border-slate-200",
+  upcoming: "bg-blue-50 text-blue-700 border-blue-200",
 };
 
 export default function RentDashboard() {
@@ -72,9 +73,20 @@ export default function RentDashboard() {
         </div>
       )}
 
+      {roll?.totals?.vacant > 0 && (
+        <div className="mb-6 flex items-start gap-2 bg-slate-100 border border-slate-300 text-slate-700 rounded-md px-3 py-2 text-sm"
+             data-testid="vacancy-alert">
+          <Home className="w-4 h-4 mt-0.5" />
+          <span>
+            {roll.totals.vacant} vacant {roll.totals.vacant === 1 ? "property" : "properties"} ·{" "}
+            {roll.totals.vacant_days} idle days so far · approx {money(roll.totals.lost_rent)} of rent forgone
+          </span>
+        </div>
+      )}
+
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <Stat testId="rent-stat-due" label="Rent due" value={money(t?.rent_due)}
-              sub={`${t?.occupied || 0} occupied · ${t?.vacant || 0} vacant`} />
+              sub={`${t?.occupied || 0} occupied · ${t?.vacant || 0} vacant${t?.upcoming ? ` · ${t.upcoming} upcoming` : ""}`} />
         <Stat testId="rent-stat-collected" label="Collected" value={money(t?.rent_collected)} tone="positive"
               sub={`${t?.owned_units || 0} owned · ${t?.managed_units || 0} managed`} />
         <Stat testId="rent-stat-pending" label="Pending" value={money(t?.pending)} tone="negative"
@@ -84,6 +96,9 @@ export default function RentDashboard() {
               sub={`${money(t?.on_behalf_of_building)} on behalf of buildings`} />
         <Stat testId="rent-stat-net" label="Net to owners" value={money(t?.net_to_owner)}
               tone={(t?.net_to_owner || 0) < 0 ? "negative" : "positive"} sub="Collected − bills paid" />
+        <Stat testId="rent-stat-vacancy" label="Vacancy cost" value={money(t?.lost_rent)}
+              tone={(t?.lost_rent || 0) > 0 ? "warning" : "default"}
+              sub={`${t?.vacant || 0} vacant · ${t?.vacant_days || 0} idle days`} />
       </div>
 
       <div className="mt-8">
@@ -115,6 +130,11 @@ export default function RentDashboard() {
                     <td>
                       <span className={`text-xs px-2 py-0.5 rounded border capitalize ${statusPill[r.status]}`}
                             data-testid={`rent-status-${r.name}`}>{r.status}</span>
+                      {r.status === "vacant" && r.vacant_days > 0 && (
+                        <div className="text-[11px] text-slate-500 mono mt-0.5" data-testid={`vacant-days-${r.name}`}>
+                          {r.vacant_days}d · {money(r.lost_rent)} lost
+                        </div>
+                      )}
                     </td>
                     <td className="num">{money(r.deposit_held)}</td>
                     <td className="num">{money(r.expenses)}</td>

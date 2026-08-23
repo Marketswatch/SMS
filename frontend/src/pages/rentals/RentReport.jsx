@@ -80,6 +80,37 @@ export default function RentReport() {
                   tone={(t?.net_to_owner || 0) < 0 ? "negative" : "positive"} />
           </div>
 
+          {t?.vacant > 0 && (
+            <Card title="Vacancy" testId="report-vacancy-card" className="mb-6">
+              <div className="overflow-x-auto">
+                <table className="data-table">
+                  <thead><tr><th>Property</th><th>Vacant since</th><th className="text-right">Idle days</th>
+                    <th className="text-right">Monthly rent</th><th className="text-right">Rent forgone</th></tr></thead>
+                  <tbody>
+                    {roll.rows.filter((r) => r.status === "vacant").map((r) => (
+                      <tr key={r.unit_id} data-testid={`report-vacancy-row-${r.name}`}>
+                        <td className="font-semibold">{r.name}</td>
+                        <td className="text-slate-500">{r.vacant_since || "—"}</td>
+                        <td className="num">{r.vacant_days}</td>
+                        <td className="num">{money(r.rent_amount || 0)}</td>
+                        <td className="num font-semibold text-amber-700">{money(r.lost_rent)}</td>
+                      </tr>
+                    ))}
+                    <tr>
+                      <td colSpan={2} className="font-semibold text-right">Total</td>
+                      <td className="num font-semibold">{t.vacant_days}</td>
+                      <td className="num font-semibold">
+                        {money(roll.rows.filter((r) => r.status === "vacant")
+                          .reduce((s, r) => s + Number(r.rent_amount || 0), 0))}
+                      </td>
+                      <td className="num font-semibold">{money(t.lost_rent)}</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </div>
+            </Card>
+          )}
+
           <Card title={`Properties I own (${owned.length})`} testId="report-owned-card" className="mb-6">
             {owned.length ? payoutTable(owned, "owned") : <p className="text-sm text-slate-500">None</p>}
           </Card>
