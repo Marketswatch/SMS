@@ -70,6 +70,17 @@ month, vacancy alert + stat + inline per-row figures, a vacancy table in Reports
 Units whose lease starts later now report status `upcoming` rather than vacant, and demo seeding refuses to
 run once real properties exist.
 
+### Iteration 6 — property module rebuilt (bill → collect → payout)
+Rewrote the rental module to the user's spec. Property master now holds rent, monthly maintenance, deposit,
+due day and a lease period in months that auto-fills the end date (calendar pick also supported).
+Monthly bill per property = rent + maintenance + ad-hoc collectibles (category from a user-extendable
+master + note) − amounts the tenant paid on my behalf; sendable by WhatsApp/SMS with a line-by-line
+breakdown. Collections are entered per bucket (rent / maintenance / ad-hoc) with a fill-from-outstanding
+helper, so each head is accounted separately; receipts print the split. Deposits stay separate.
+Payouts to buildings/associations track what I owe per property (maintenance payable defaults to the
+figure collected, editable) with credits for bills I or the tenant paid on the building's behalf —
+balance = payable − paid − credits. Removed the old Rent & Deposits / Bills Paid screens.
+
 ## Backlog
 - P1: commission / management fee on managed rental units (explicitly deferred by user);
   tenant-facing rental portal; shadcn date pickers replacing native date inputs.

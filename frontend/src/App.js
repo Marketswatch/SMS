@@ -16,8 +16,9 @@ import Overview from "@/pages/Overview";
 import MyDues from "@/pages/MyDues";
 import RentDashboard from "@/pages/rentals/RentDashboard";
 import Units from "@/pages/rentals/Units";
+import Bills from "@/pages/rentals/Bills";
 import Collections from "@/pages/rentals/Collections";
-import Expenses from "@/pages/rentals/Expenses";
+import Payouts from "@/pages/rentals/Payouts";
 import RentReport from "@/pages/rentals/RentReport";
 import "@/index.css";
 
@@ -71,8 +72,9 @@ export default function App() {
             <Route path="/my-dues" element={<MyDues />} />
             <Route path="/rentals" element={<Gate adminOnly><RentDashboard /></Gate>} />
             <Route path="/rentals/units" element={<Gate adminOnly><Units /></Gate>} />
+            <Route path="/rentals/bills" element={<Gate adminOnly><Bills /></Gate>} />
             <Route path="/rentals/collections" element={<Gate adminOnly><Collections /></Gate>} />
-            <Route path="/rentals/expenses" element={<Gate adminOnly><Expenses /></Gate>} />
+            <Route path="/rentals/payouts" element={<Gate adminOnly><Payouts /></Gate>} />
             <Route path="/rentals/report" element={<Gate adminOnly><RentReport /></Gate>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />

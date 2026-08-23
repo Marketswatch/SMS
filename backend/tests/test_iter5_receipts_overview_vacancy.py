@@ -20,6 +20,12 @@ import pytest
 import requests
 from dotenv import dotenv_values
 
+# STALE (iteration 6): the rentals module was rebuilt — /rentals/collections, /rentals/expenses
+# and the old single-amount payment/receipt shape no longer exist. Superseded by
+# tests/test_iter6_rentals_rebuild.py. Skipped so it stops polluting the live preview DB.
+pytestmark = pytest.mark.skip(reason="rentals module rebuilt in iteration 6; see test_iter6_rentals_rebuild.py")
+
+
 frontend_env = dotenv_values("/app/frontend/.env")
 base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL")
 if not base_url:

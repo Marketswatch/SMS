@@ -11,9 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { money } from "@/lib/format";
 
 const blank = {
-  name: "", kind: "flat", address: "", ownership: "own", owner_name: "", building_property_id: "",
-  rent_amount: "", rent_due_day: "5", deposit_amount: "", tenant_name: "", tenant_phone: "",
-  lease_start: "", lease_end: "", vacant_since: "", status: "active", notes: "",
+  name: "", kind: "flat", address: "", ownership: "own", owner_name: "", building_property_id: "", building_name: "",
+  rent_amount: "", maintenance_amount: "", rent_due_day: "5", deposit_amount: "", tenant_name: "", tenant_phone: "",
+  lease_start: "", lease_months: "", lease_end: "", vacant_since: "", status: "active", notes: "",
 };
 
 export default function Units() {
@@ -34,8 +34,10 @@ export default function Units() {
       ...form,
       building_property_id: form.building_property_id || null,
       rent_amount: Number(form.rent_amount || 0),
+      maintenance_amount: Number(form.maintenance_amount || 0),
       deposit_amount: Number(form.deposit_amount || 0),
       rent_due_day: Number(form.rent_due_day || 5),
+      lease_months: Number(form.lease_months || 0),
     };
     try {
       if (editId) await api.put(`/rentals/units/${editId}`, payload);
@@ -51,6 +53,7 @@ export default function Units() {
       ...blank, ...u,
       building_property_id: u.building_property_id || "",
       rent_amount: String(u.rent_amount ?? ""), deposit_amount: String(u.deposit_amount ?? ""),
+      maintenance_amount: String(u.maintenance_amount ?? ""), lease_months: String(u.lease_months || ""),
       rent_due_day: String(u.rent_due_day ?? 5),
     });
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -118,28 +121,44 @@ export default function Units() {
               </Select>
               <p className="text-xs text-slate-500 mt-1">Rent stays separate from that building's maintenance split.</p>
             </div>
+            {!form.building_property_id && (
+              <div>
+                <Label className="label-caps">Building / association name</Label>
+                <Input className="mt-2 h-11" data-testid="unit-building-name-input"
+                       placeholder="e.g. Green Meadows Association"
+                       value={form.building_name} onChange={(e) => setForm({ ...form, building_name: e.target.value })} />
+                <p className="text-xs text-slate-500 mt-1">Used to match your payouts to the right association.</p>
+              </div>
+            )}
             <div>
               <Label className="label-caps">Address</Label>
               <Input className="mt-2 h-11" data-testid="unit-address-input"
                      value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 gap-3 items-end">
               <div>
                 <Label className="label-caps">Monthly rent</Label>
                 <Input type="number" inputMode="decimal" className="mt-2 h-12 mono text-lg" data-testid="unit-rent-input"
                        value={form.rent_amount} onChange={(e) => setForm({ ...form, rent_amount: e.target.value })} />
               </div>
               <div>
-                <Label className="label-caps">Rent due day</Label>
-                <Input type="number" inputMode="numeric" min="1" max="28" className="mt-2 h-12 mono text-lg"
+                <Label className="label-caps">Maintenance / month</Label>
+                <Input type="number" inputMode="decimal" className="mt-2 h-12 mono text-lg" data-testid="unit-maintenance-input"
+                       value={form.maintenance_amount} onChange={(e) => setForm({ ...form, maintenance_amount: e.target.value })} />
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-3 items-end">
+              <div>
+                <Label className="label-caps">Security deposit</Label>
+                <Input type="number" inputMode="decimal" className="mt-2 h-11 mono" data-testid="unit-deposit-input"
+                       value={form.deposit_amount} onChange={(e) => setForm({ ...form, deposit_amount: e.target.value })} />
+              </div>
+              <div>
+                <Label className="label-caps">Due day</Label>
+                <Input type="number" inputMode="numeric" min="1" max="28" className="mt-2 h-11 mono"
                        data-testid="unit-due-day-input"
                        value={form.rent_due_day} onChange={(e) => setForm({ ...form, rent_due_day: e.target.value })} />
               </div>
-            </div>
-            <div>
-              <Label className="label-caps">Security deposit</Label>
-              <Input type="number" inputMode="decimal" className="mt-2 h-11 mono" data-testid="unit-deposit-input"
-                     value={form.deposit_amount} onChange={(e) => setForm({ ...form, deposit_amount: e.target.value })} />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div>
@@ -153,18 +172,48 @@ export default function Units() {
                        value={form.tenant_phone} onChange={(e) => setForm({ ...form, tenant_phone: e.target.value })} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-3 gap-3 items-end">
               <div>
                 <Label className="label-caps">Lease start</Label>
                 <Input type="date" className="mt-2 h-11" data-testid="unit-lease-start-input"
-                       value={form.lease_start} onChange={(e) => setForm({ ...form, lease_start: e.target.value })} />
+                       value={form.lease_start}
+                       onChange={(e) => {
+                         const start = e.target.value;
+                         let end = form.lease_end;
+                         if (start && Number(form.lease_months) > 0) {
+                           const d = new Date(start);
+                           d.setMonth(d.getMonth() + Number(form.lease_months));
+                           d.setDate(d.getDate() - 1);
+                           end = d.toISOString().slice(0, 10);
+                         }
+                         setForm({ ...form, lease_start: start, lease_end: end });
+                       }} />
+              </div>
+              <div>
+                <Label className="label-caps">Period (months)</Label>
+                <Input type="number" inputMode="numeric" min="0" className="mt-2 h-11 mono" data-testid="unit-lease-months-input"
+                       placeholder="11" value={form.lease_months}
+                       onChange={(e) => {
+                         const months = e.target.value;
+                         let end = form.lease_end;
+                         if (form.lease_start && Number(months) > 0) {
+                           const d = new Date(form.lease_start);
+                           d.setMonth(d.getMonth() + Number(months));
+                           d.setDate(d.getDate() - 1);
+                           end = d.toISOString().slice(0, 10);
+                         }
+                         setForm({ ...form, lease_months: months, lease_end: end });
+                       }} />
               </div>
               <div>
                 <Label className="label-caps">Lease end</Label>
                 <Input type="date" className="mt-2 h-11" data-testid="unit-lease-end-input"
-                       value={form.lease_end} onChange={(e) => setForm({ ...form, lease_end: e.target.value })} />
+                       value={form.lease_end} onChange={(e) => setForm({ ...form, lease_end: e.target.value, lease_months: "" })} />
               </div>
             </div>
+            <p className="text-xs text-slate-500 -mt-2">
+              Enter a period in months and the end date fills itself, or pick the end date from the calendar.
+            </p>
             <div>
               <Label className="label-caps">Status</Label>
               <Select value={form.status} onValueChange={(v) => setForm({ ...form, status: v })}>
@@ -194,7 +243,8 @@ export default function Units() {
             <div className="overflow-x-auto">
               <table className="data-table">
                   <thead><tr><th>Name</th><th>Type</th><th>Ownership</th><th>Tenant</th>
-                    <th className="text-right">Rent</th><th className="text-right">Deposit</th>
+                    <th className="text-right">Rent</th><th className="text-right">Maint.</th>
+                    <th className="text-right">Deposit</th>
                     <th>Lease</th><th>Status</th><th /></tr></thead>
                 <tbody>
                   {units.map((u) => (
@@ -204,8 +254,10 @@ export default function Units() {
                       <td>{u.ownership === "own" ? "Own" : `Managed · ${u.owner_name || "—"}`}</td>
                       <td>{u.tenant_name || "—"}</td>
                       <td className="num">{money(u.rent_amount)}</td>
+                      <td className="num">{money(u.maintenance_amount)}</td>
                       <td className="num">{money(u.deposit_amount)}</td>
-                      <td className="text-slate-500 text-xs">{u.lease_start || "—"} → {u.lease_end || "—"}</td>
+                      <td className="text-slate-500 text-xs">{u.lease_start || "—"} → {u.lease_end || "—"}
+                        {u.lease_months ? <span className="text-slate-400"> ({u.lease_months}m)</span> : null}</td>
                       <td className="capitalize">{u.status}
                         {u.status === "vacant" && u.vacant_since && (
                           <div className="text-[11px] text-slate-500 mono normal-case"

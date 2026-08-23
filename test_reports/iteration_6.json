@@ -1,0 +1,57 @@
+{
+  "summary": "Iteration-6 full test of the REBUILT property module (backend + frontend). Backend: new suite /app/backend/tests/test_iter6_rentals_rebuild.py — 47/47 passing (property master incl. lease-end auto-compute 2026-01-01+11m => 2026-11-30 and manual calendar end date, /rentals/lease-end validation, category master seeding + case-insensitive dedupe + blank rejection, bill draft prefill from master + upsert + totals, split collections with rent/maintenance/adhoc buckets and reversal on delete, deposits accumulating across ALL months and excluded from bill/collected, payouts + is_credit, statuses paid/overdue/vacant/upcoming with zero billing, CSV+PDF export content, receipt PDF text (40,000/2,500/42,500), /api/overview reconciliation, resident 403 on all 11 rentals/overview endpoints + 401 unauthenticated, 400 on garbage months, 404 on unknown unit). Re-verified the user's arithmetic chain end-to-end and it matches exactly: to-collect 44300, collected 42500, balance 1800, adhoc_outstanding 1800, building payable 5500, credits 1200+900=2100, balance 3400 (before my extra 2000 payout). Regression: backend_test.py 36/37 (only the known edge-proxy CORS wildcard assertion), test_media_notify.py 11/11, test_auth_playbook.py 4/4 (bcrypt $2b$, httpOnly cookie, lockout, seed_admin update). Frontend (1920x1080 + 390x844): property create/edit, Bills draft chip -> edit -> 2 ad-hoc items (building toggle, direction) -> live total 44,300 -> save -> reopen persisted, WhatsApp message line-by-line breakdown verified via intercepted wa.me URL, SMS button clicks without breaking the page, CategorySelect plus-button adds 'QA Lift AMC' to the master and it becomes selectable in the other row, Collections outstanding box + 'Fill from outstanding' (40000/2500/1800) + record 42500 -> position row and stats segregated, receipt PDF download (2.1KB) + WhatsApp share with the split, Deposits tab records/deletes and never touches 'Collected', Payouts payable 5500/paid 2000/credits 2100/balance 1400 + free-typed association, Reports own-vs-managed + settlement totals row + valid CSV/PDF, Combined Overview reconciles (money_in 46300 = 3800 + 42500; still_to_collect 11939.07 = 6639.07 + 5300). Mobile 390x844: no horizontal overflow anywhere, bill editor / collection / payout forms all usable. All QA data (property, bill, payment, deposit, 3 payouts, 1 category) deleted; only the user's 'srinithi' property and the 2 buildings remain. Also gated the two now-stale rentals suites (iter4/iter5) that hit removed endpoints and re-seeded demo data into the user's live DB.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/rentals/lease-end", "issue": "Non-integer `months` returns FastAPI 422 instead of the specified 400 (bad `start` correctly 400). Endpoint is also unused by the frontend."},
+      {"endpoint": "GET /api/rentals/categories", "issue": "Seeds defaults inside a GET (write on read) with no unique index on name — two concurrent first-time GETs can double-insert the 8 defaults."},
+      {"endpoint": "GET /api/rentals/statement", "issue": "N+1 reads: get_or_draft_bill does one rental_bills.find_one per unit inside the loop; batch with a single $in query before the loop."},
+      {"endpoint": "PUT /api/rentals/payouts/{id}", "issue": "Unlike create_payout it never validates the supplied unit_id (no require_unit), so an update can point a payout at a deleted/unknown property."},
+      {"endpoint": "DELETE /api/rentals/units/{id}", "issue": "Cascade deletes payouts by unit_id only; payouts recorded without a unit_id keep inflating that building's 'paid' after the property is gone."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Units.jsx (property master)", "issue": "No input for a free-typed building/association name — the form state carries building_name but only the SocietyHub-building dropdown is rendered. Every standalone property therefore lands in the 'Unassigned' settlement bucket, and an outside association typed on the Payouts form (e.g. 'QA Outside Assoc') gets its own row with payable 0 and a negative balance that can never be reconciled against a property's maintenance_payable/ad-hoc. Spec item 8 (SocietyHub building OR free-typed association) is only half implemented.", "selector": "[data-testid=\"unit-building-select\"] (missing sibling unit-building-name-input)", "priority": "HIGH"},
+      {"component": "Units.jsx lease period", "issue": "Typing a period in months does NOT fill the Lease end date input (stays blank until the record is saved and re-opened), yet the helper text says 'Enter a period in months and the end date fills itself'. /api/rentals/lease-end exists for exactly this and is never called.", "selector": "[data-testid=\"unit-lease-months-input\"] / unit-lease-end-input", "priority": "MEDIUM"},
+      {"component": "Payouts.jsx category", "issue": "Form defaults category to 'Maintenance', which is not in the category master, so the CategorySelect trigger renders visually EMPTY while still saving 'Maintenance'. Either seed 'Maintenance' into the master or default to cats[0].", "selector": "[data-testid=\"payout-category\"]", "priority": "MEDIUM"},
+      {"component": "Bills.jsx / Collections.jsx WhatsApp text", "issue": "Amounts in the tenant message and receipt share are unformatted ('Rs.40000.00') while the whole UI uses grouped currency ('₹40,000.00').", "selector": "[data-testid=\"bill-whatsapp-<name>\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [
+      {"flow": "Reports 'Still to pay buildings'", "issue": "The card nets negative balances of unmatched associations against real payables (₹1,400 + −₹500 = ₹900), understating what is actually owed. Root cause is the same missing property-side association name.", "affected_selectors": ["[data-testid=\"report-settlement-row-QA Outside Assoc\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "Properties form (desktop 380px column)", "issues": ["Paired labels wrap to 2-3 lines ('Monthly maintenance', 'Period (months)') so the two inputs in each 2-col row end up vertically misaligned"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter6_rentals_rebuild.py",
+    "/app/test_reports/pytest/iter6_rentals.xml"
+  ],
+  "action_items": [
+    "Add a free-typed 'Building / association name' input to the Properties form (shown when no SocietyHub building is selected) so outside-association payable can be matched to payouts; today all such properties are 'Unassigned'.",
+    "Call GET /api/rentals/lease-end (or compute client-side) when lease start + months change so the Lease end field visibly auto-fills, matching the helper text.",
+    "Fix the Payouts form category default so the dropdown is not blank (seed 'Maintenance' into the category master or default to the first master category).",
+    "Optional: 400 instead of 422 for a non-integer months param on /api/rentals/lease-end; add a unique index on rental_categories.name and move seeding out of the GET.",
+    "Optional: format currency in the WhatsApp/SMS bill and receipt messages with thousand separators."
+  ],
+  "critical_code_review_comments": [
+    "rentals.py build_statement() runs one rental_bills.find_one per unit (N+1); fetch all bills for the month with one find({'month': month}) and index by unit_id.",
+    "list_categories() writes (insert_many) from a GET handler and rental_categories has no unique index on name — duplicate defaults are possible under concurrency.",
+    "normalise_unit() recomputes lease_end whenever lease_months is truthy, so an API client that sends both a manual lease_end and a stale lease_months silently loses the manual date (the UI works only because it clears months on calendar pick).",
+    "update_payout() skips the require_unit() validation that create_payout performs — same payload should get the same validation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter6_rentals_rebuild.py",
+    "/app/backend/tests/test_iter5_receipts_overview_vacancy.py",
+    "/app/backend/tests/test_iter4_rentals_annual.py",
+    "/app/frontend/src/pages/rentals/Bills.jsx"
+  ],
+  "success_rate": {"backend": "100% (47/47 new; 51/52 regression incl. known CORS proxy)", "frontend": "88% (all flows work; 4 UI defects, 1 of them functional)"},
+  "seed_data_creation": "Created and then fully deleted: property 'QA UI Prop' (rent 40000/maint 2500/deposit 100000/tenant QA Tenant) with its 2026-08 bill, one 42500 collection, one 100000 deposit, three payouts and category 'QA Lift AMC'; plus API-only 'QA Prop <hex>' + 'QA Assoc <hex>' fixtures which self-clean. Also removed two stray 'QA Receipt Flat' units left behind by the stale iteration-5 suite. User records (srinithi, Srinithi Apartments, Sunrise Residency) untouched — verified after cleanup.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "admin@societyhub.com / admin123 (super_admin), tenant1@societyhub.com / demo123 (resident)",
+  "context_for_next_testing_agent": "Run pytest per file with `-n 0` (pytest.ini forces -n 2 --dist loadscope; the suites share one live preview DB). New rentals suite: tests/test_iter6_rentals_rebuild.py (self-cleaning, unique QA <hex> names, includes a dependency-free pdf_text() extractor). tests/test_iter4_rentals_annual.py and tests/test_iter5_receipts_overview_vacancy.py are now module-level skipped — they target removed endpoints (/rentals/collections, /rentals/expenses, /rentals/demo/seed) and were polluting the user's live data; delete or rewrite them rather than un-skipping. Container date is 2026-08-23, so the default rentMonth in the UI is 2026-08 and any 2026-07 or earlier bill shows as 'overdue'. Frontend: rentals mode requires localStorage sh_mode='rentals'; intercept wa.me with an init script overriding window.open (openSms uses window.location.href with an sms: scheme, which the browser ignores silently). The only backend_test.py failure (CORS Access-Control-Allow-Origin '*') is the known edge-proxy rewrite, not an app bug.",
+  "rca_of_the_issue": "The 'Unassigned building' problem: rentals.py keys buildings by building_property_id -> building_name -> 'unassigned'. UnitIn accepts building_name and Units.jsx keeps it in form state, but the JSX never renders an input for it, so it is always posted as ''. Payouts.jsx does expose the free-typed name, so payouts/credits for an outside association land under that name while the matching property's payable stays under 'unassigned' — producing one row with payable but no payments and another with payments but no payable (negative balance). Fix is purely frontend: render a building_name Input in the Properties form when building_property_id is empty."
+}

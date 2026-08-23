@@ -1,13 +1,14 @@
-"""Property (rental) management module — units, rent/deposit collection, expenses, rent roll.
+"""Property management: monthly bill per property, split collections, and payouts to buildings.
 
-Kept fully separate from the maintenance cost-split flow: money collected from tenants here
-never mixes with the building's maintenance statement. Expenses an admin pays on behalf of a
-building are tagged so they can be tallied against that building separately.
+Bill to tenant  = rent + maintenance + ad-hoc collectibles - amounts the tenant paid on my behalf.
+Collections are allocated into buckets (rent / maintenance / ad-hoc) so each field is accounted.
+Payouts track what I owe each building/association, with credits for bills I paid for them directly.
 """
 import io
 import csv
 import re
-from datetime import datetime, timezone, date
+import calendar
+from datetime import datetime, timezone, date, timedelta
 from typing import List, Optional, Dict, Any
 
 from fastapi import APIRouter, HTTPException, Request, Depends, Query
@@ -19,24 +20,23 @@ import auth as A
 
 UNIT_KINDS = ["flat", "shop", "house", "office", "other"]
 OWNERSHIP = ["own", "managed"]
-EXPENSE_CATEGORIES = ["tax", "repair", "society_maintenance", "utility", "other"]
-COLLECTION_KINDS = ["rent", "deposit", "deposit_refund", "deposit_deduction"]
+DEPOSIT_KINDS = ["deposit", "deposit_refund", "deposit_deduction"]
+DEFAULT_CATEGORIES = ["Maintenance", "Repair", "Water tanker", "Common electricity", "Painting",
+                      "Genset charges", "STP charges", "Property tax", "Other"]
+MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+_statement_builder = None
+
+
+async def rent_roll_for(db, month: str) -> dict:
+    """Back-compat shim used by the combined overview."""
+    if _statement_builder is None:
+        raise RuntimeError("rentals router not initialised")
+    return await _statement_builder(month)
 
 
 def r2(x):
     return round(float(x or 0), 2)
-
-
-MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
-
-_build_rent_roll = None
-
-
-async def rent_roll_for(db, month: str) -> dict:
-    """Reuse the rent-roll builder from outside the router (combined overview)."""
-    if _build_rent_roll is None:
-        raise RuntimeError("rentals router not initialised")
-    return await _build_rent_roll(month)
 
 
 def valid_month(month: str) -> str:
@@ -48,9 +48,13 @@ def valid_month(month: str) -> str:
 def month_bounds(month: str):
     valid_month(month)
     y, m = (int(v) for v in month.split("-"))
-    start = date(y, m, 1)
-    end = date(y + (m == 12), (m % 12) + 1, 1)
-    return start, end
+    return date(y, m, 1), date(y, m, calendar.monthrange(y, m)[1])
+
+
+def add_months(d: date, months: int) -> date:
+    total = d.month - 1 + months
+    y, m = d.year + total // 12, total % 12 + 1
+    return date(y, m, min(d.day, calendar.monthrange(y, m)[1]))
 
 
 class UnitIn(BaseModel):
@@ -60,39 +64,75 @@ class UnitIn(BaseModel):
     ownership: str = "own"
     owner_name: str = ""
     building_property_id: Optional[str] = None
-    flat_id: Optional[str] = None
+    building_name: str = ""
     rent_amount: float = 0
-    rent_due_day: int = 5
+    maintenance_amount: float = 0
     deposit_amount: float = 0
+    rent_due_day: int = 5
     tenant_name: str = ""
     tenant_phone: str = ""
     lease_start: str = ""
+    lease_months: int = 0
     lease_end: str = ""
     vacant_since: str = ""
     status: str = "active"
     notes: str = ""
 
 
-class CollectionIn(BaseModel):
+class BillItem(BaseModel):
+    category: str = "Other"
+    note: str = ""
+    amount: float = 0
+    direction: str = "collect"          # collect | tenant_paid
+    pay_to_building: bool = False       # counts toward / credits my building payable
+
+
+class BillIn(BaseModel):
     unit_id: str
     month: str
-    kind: str = "rent"
-    amount: float
+    rent: float = 0
+    maintenance: float = 0
+    maintenance_payable: Optional[float] = None   # to the building; defaults to `maintenance`
+    items: List[BillItem] = []
+    notes: str = ""
+
+
+class PaymentIn(BaseModel):
+    unit_id: str
+    month: str
     date: str
+    rent_paid: float = 0
+    maintenance_paid: float = 0
+    adhoc_paid: float = 0
     mode: str = "upi"
     notes: str = ""
 
 
-class ExpenseIn(BaseModel):
+class DepositIn(BaseModel):
     unit_id: str
     month: str
-    category: str = "repair"
-    description: str = ""
+    kind: str = "deposit"
     amount: float
     date: str
-    on_behalf_of_building: bool = False
+    mode: str = "bank"
+    notes: str = ""
+
+
+class PayoutIn(BaseModel):
     building_property_id: Optional[str] = None
+    building_name: str = ""
+    unit_id: Optional[str] = None
+    month: str
+    amount: float
+    date: str
+    category: str = "Maintenance"
+    note: str = ""
+    is_credit: bool = False     # a bill I paid for the building -> credited against my payable
     media: List[Dict[str, Any]] = []
+
+
+class CategoryIn(BaseModel):
+    name: str
 
 
 def make_router(db):
@@ -120,18 +160,61 @@ def make_router(db):
             raise HTTPException(status_code=403, detail="Admin access required")
         return user
 
-    # ------------------------------------------------------------------ units
+    async def require_unit(unit_id: str) -> dict:
+        u = await db.rental_units.find_one({"_id": oid(unit_id)})
+        if not u:
+            raise HTTPException(status_code=404, detail="Property not found")
+        return u
+
+    # ------------------------------------------------------- category master
+    @router.get("/categories")
+    async def list_categories(user: dict = Depends(admin_user)):
+        await db.rental_categories.create_index("name", unique=True)
+        docs = await db.rental_categories.find().sort("name", 1).to_list(300)
+        if not docs:
+            for n in DEFAULT_CATEGORIES:
+                await db.rental_categories.update_one({"name": n},
+                                                      {"$setOnInsert": {"name": n, "created_at": datetime.now(timezone.utc)}},
+                                                      upsert=True)
+            docs = await db.rental_categories.find().sort("name", 1).to_list(300)
+        return [ser(d) for d in docs]
+
+    @router.post("/categories")
+    async def create_category(body: CategoryIn, user: dict = Depends(admin_user)):
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(status_code=400, detail="Category name required")
+        existing = await db.rental_categories.find_one({"name": {"$regex": f"^{re.escape(name)}$", "$options": "i"}})
+        if existing:
+            return ser(existing)
+        res = await db.rental_categories.insert_one({"name": name, "created_at": datetime.now(timezone.utc)})
+        return ser(await db.rental_categories.find_one({"_id": res.inserted_id}))
+
+    @router.delete("/categories/{cid}")
+    async def delete_category(cid: str, user: dict = Depends(admin_user)):
+        await db.rental_categories.delete_one({"_id": oid(cid)})
+        return {"ok": True}
+
+    # ---------------------------------------------------------------- units
+    def normalise_unit(doc: dict) -> dict:
+        if doc.get("lease_start") and doc.get("lease_months"):
+            try:
+                start = date.fromisoformat(doc["lease_start"])
+                doc["lease_end"] = str(add_months(start, int(doc["lease_months"])) - timedelta(days=1))
+            except (ValueError, TypeError):
+                pass
+        return doc
+
     @router.post("/units")
     async def create_unit(body: UnitIn, user: dict = Depends(admin_user)):
         if body.kind not in UNIT_KINDS:
             raise HTTPException(status_code=400, detail="Unknown unit type")
         if body.ownership not in OWNERSHIP:
             raise HTTPException(status_code=400, detail="Ownership must be 'own' or 'managed'")
-        doc = body.model_dump()
+        doc = normalise_unit(body.model_dump())
         doc.update({"created_by": user["id"], "created_at": datetime.now(timezone.utc)})
         res = await db.rental_units.insert_one(doc)
-        doc["_id"] = res.inserted_id
-        return ser(doc)
+        return ser(await db.rental_units.find_one({"_id": res.inserted_id}))
 
     @router.get("/units")
     async def list_units(user: dict = Depends(admin_user)):
@@ -140,261 +223,410 @@ def make_router(db):
 
     @router.put("/units/{uid}")
     async def update_unit(uid: str, body: UnitIn, user: dict = Depends(admin_user)):
-        await db.rental_units.update_one({"_id": oid(uid)}, {"$set": body.model_dump()})
-        doc = await db.rental_units.find_one({"_id": oid(uid)})
-        if not doc:
-            raise HTTPException(status_code=404, detail="Unit not found")
-        return ser(doc)
+        await require_unit(uid)
+        await db.rental_units.update_one({"_id": oid(uid)}, {"$set": normalise_unit(body.model_dump())})
+        return ser(await db.rental_units.find_one({"_id": oid(uid)}))
 
     @router.delete("/units/{uid}")
     async def delete_unit(uid: str, user: dict = Depends(admin_user)):
+        u = await db.rental_units.find_one({"_id": oid(uid)})
         await db.rental_units.delete_one({"_id": oid(uid)})
-        await db.rent_collections.delete_many({"unit_id": uid})
-        await db.rental_expenses.delete_many({"unit_id": uid})
+        for c in ("rental_bills", "rent_payments", "rental_deposits", "rental_payouts"):
+            await db[c].delete_many({"unit_id": uid})
+        # drop building payouts left without any remaining property for that building
+        if u:
+            key = u.get("building_property_id")
+            name = (u.get("building_name") or "").strip()
+            q = {"building_property_id": key} if key else ({"building_name": name} if name else None)
+            if q:
+                still = await db.rental_units.find_one(q)
+                if not still:
+                    await db.rental_payouts.delete_many({**q, "unit_id": None})
         return {"ok": True}
 
-    async def require_unit(unit_id: str):
-        if not await db.rental_units.find_one({"_id": oid(unit_id)}):
-            raise HTTPException(status_code=404, detail="Property not found")
+    @router.get("/lease-end")
+    async def lease_end(start: str, months: str, user: dict = Depends(admin_user)):
+        try:
+            d = date.fromisoformat(start)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="start must be YYYY-MM-DD")
+        try:
+            n = int(months)
+        except (TypeError, ValueError):
+            raise HTTPException(status_code=400, detail="months must be a whole number")
+        if n <= 0:
+            raise HTTPException(status_code=400, detail="months must be positive")
+        return {"lease_end": str(add_months(d, n) - timedelta(days=1))}
 
-    # ------------------------------------------------------------ collections
-    @router.post("/collections")
-    async def create_collection(body: CollectionIn, user: dict = Depends(admin_user)):
-        if body.kind not in COLLECTION_KINDS:
-            raise HTTPException(status_code=400, detail="Unknown collection type")
+    # ---------------------------------------------------------------- bills
+    def bill_totals(bill: dict) -> dict:
+        items = bill.get("items") or []
+        adhoc_collect = sum(float(i.get("amount", 0)) for i in items if i.get("direction") == "collect")
+        tenant_paid = sum(float(i.get("amount", 0)) for i in items if i.get("direction") == "tenant_paid")
+        rent = float(bill.get("rent", 0) or 0)
+        maint = float(bill.get("maintenance", 0) or 0)
+        return {
+            "rent": r2(rent), "maintenance": r2(maint),
+            "adhoc_collect": r2(adhoc_collect), "tenant_paid_on_my_behalf": r2(tenant_paid),
+            "total_to_collect": r2(rent + maint + adhoc_collect - tenant_paid),
+        }
+
+    async def get_or_draft_bill(unit: dict, month: str, cache: Optional[dict] = None) -> dict:
+        uid = str(unit["_id"])
+        bill = cache.get(uid) if cache is not None else await db.rental_bills.find_one({"unit_id": uid, "month": month})
+        if bill:
+            b = ser(bill)
+            b["is_draft"] = False
+            return b
+        return {"id": None, "is_draft": True, "unit_id": uid, "month": month,
+                "rent": r2(unit.get("rent_amount", 0)), "maintenance": r2(unit.get("maintenance_amount", 0)),
+                "maintenance_payable": None, "items": [], "notes": ""}
+
+    @router.get("/bills")
+    async def list_bills(month: str, user: dict = Depends(admin_user)):
+        valid_month(month)
+        units = await db.rental_units.find().sort("name", 1).to_list(500)
+        bill_cache = {b["unit_id"]: b for b in
+                      await db.rental_bills.find({"month": month}).to_list(2000)}
+        out = []
+        for u in units:
+            bill = await get_or_draft_bill(u, month, bill_cache)
+            out.append({**bill, "unit_name": u.get("name"), "tenant_name": u.get("tenant_name", ""),
+                        "tenant_phone": u.get("tenant_phone", ""),
+                        "building_name": u.get("building_name") or "",
+                        "totals": bill_totals(bill)})
+        return out
+
+    @router.put("/bills")
+    async def upsert_bill(body: BillIn, user: dict = Depends(admin_user)):
         valid_month(body.month)
         await require_unit(body.unit_id)
         doc = body.model_dump()
-        doc["created_at"] = datetime.now(timezone.utc)
-        res = await db.rent_collections.insert_one(doc)
-        doc["_id"] = res.inserted_id
-        return ser(doc)
+        doc["updated_at"] = datetime.now(timezone.utc)
+        await db.rental_bills.update_one({"unit_id": body.unit_id, "month": body.month},
+                                         {"$set": doc}, upsert=True)
+        bill = await db.rental_bills.find_one({"unit_id": body.unit_id, "month": body.month})
+        b = ser(bill)
+        return {**b, "is_draft": False, "totals": bill_totals(b)}
 
-    @router.get("/collections")
-    async def list_collections(month: Optional[str] = None, unit_id: Optional[str] = None,
-                               user: dict = Depends(admin_user)):
-        q = {}
-        if month:
-            q["month"] = month
-        if unit_id:
-            q["unit_id"] = unit_id
-        docs = await db.rent_collections.find(q).sort("date", 1).to_list(2000)
-        return [ser(d) for d in docs]
-
-    @router.put("/collections/{cid}")
-    async def update_collection(cid: str, body: CollectionIn, user: dict = Depends(admin_user)):
-        valid_month(body.month)
-        await require_unit(body.unit_id)
-        await db.rent_collections.update_one({"_id": oid(cid)}, {"$set": body.model_dump()})
-        doc = await db.rent_collections.find_one({"_id": oid(cid)})
-        if not doc:
-            raise HTTPException(status_code=404, detail="Entry not found")
-        return ser(doc)
-
-    @router.delete("/collections/{cid}")
-    async def delete_collection(cid: str, user: dict = Depends(admin_user)):
-        await db.rent_collections.delete_one({"_id": oid(cid)})
+    @router.delete("/bills/{bid}")
+    async def delete_bill(bid: str, user: dict = Depends(admin_user)):
+        await db.rental_bills.delete_one({"_id": oid(bid)})
         return {"ok": True}
 
-    # --------------------------------------------------------------- expenses
-    @router.post("/expenses")
-    async def create_expense(body: ExpenseIn, user: dict = Depends(admin_user)):
-        if body.category not in EXPENSE_CATEGORIES:
-            raise HTTPException(status_code=400, detail="Unknown expense category")
+    # ------------------------------------------------------------- payments
+    @router.post("/payments")
+    async def create_payment(body: PaymentIn, user: dict = Depends(admin_user)):
         valid_month(body.month)
         await require_unit(body.unit_id)
         doc = body.model_dump()
+        doc["total"] = r2(body.rent_paid + body.maintenance_paid + body.adhoc_paid)
         doc["created_at"] = datetime.now(timezone.utc)
-        res = await db.rental_expenses.insert_one(doc)
-        doc["_id"] = res.inserted_id
-        return ser(doc)
+        res = await db.rent_payments.insert_one(doc)
+        return ser(await db.rent_payments.find_one({"_id": res.inserted_id}))
 
-    @router.get("/expenses")
-    async def list_expenses(month: Optional[str] = None, unit_id: Optional[str] = None,
+    @router.get("/payments")
+    async def list_payments(month: Optional[str] = None, unit_id: Optional[str] = None,
                             user: dict = Depends(admin_user)):
-        q = {}
-        if month:
-            q["month"] = month
-        if unit_id:
-            q["unit_id"] = unit_id
-        docs = await db.rental_expenses.find(q).sort("date", 1).to_list(2000)
+        q = {k: v for k, v in (("month", month), ("unit_id", unit_id)) if v}
+        docs = await db.rent_payments.find(q).sort("date", 1).to_list(2000)
         return [ser(d) for d in docs]
 
-    @router.put("/expenses/{eid}")
-    async def update_expense(eid: str, body: ExpenseIn, user: dict = Depends(admin_user)):
+    @router.put("/payments/{pid}")
+    async def update_payment(pid: str, body: PaymentIn, user: dict = Depends(admin_user)):
         valid_month(body.month)
         await require_unit(body.unit_id)
-        await db.rental_expenses.update_one({"_id": oid(eid)}, {"$set": body.model_dump()})
-        doc = await db.rental_expenses.find_one({"_id": oid(eid)})
-        if not doc:
-            raise HTTPException(status_code=404, detail="Expense not found")
-        return ser(doc)
+        doc = body.model_dump()
+        doc["total"] = r2(body.rent_paid + body.maintenance_paid + body.adhoc_paid)
+        await db.rent_payments.update_one({"_id": oid(pid)}, {"$set": doc})
+        rec = await db.rent_payments.find_one({"_id": oid(pid)})
+        if not rec:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        return ser(rec)
 
-    @router.delete("/expenses/{eid}")
-    async def delete_expense(eid: str, user: dict = Depends(admin_user)):
-        await db.rental_expenses.delete_one({"_id": oid(eid)})
+    @router.delete("/payments/{pid}")
+    async def delete_payment(pid: str, user: dict = Depends(admin_user)):
+        await db.rent_payments.delete_one({"_id": oid(pid)})
         return {"ok": True}
 
-    # --------------------------------------------------------------- rent roll
-    def lease_active(u: dict, month: str) -> bool:
-        return unit_state(u, month) == "active"
+    # -------------------------------------------------------------- deposits
+    @router.post("/deposits")
+    async def create_deposit(body: DepositIn, user: dict = Depends(admin_user)):
+        if body.kind not in DEPOSIT_KINDS:
+            raise HTTPException(status_code=400, detail="Unknown deposit entry type")
+        valid_month(body.month)
+        await require_unit(body.unit_id)
+        doc = body.model_dump()
+        doc["created_at"] = datetime.now(timezone.utc)
+        res = await db.rental_deposits.insert_one(doc)
+        return ser(await db.rental_deposits.find_one({"_id": res.inserted_id}))
 
+    @router.get("/deposits")
+    async def list_deposits(unit_id: Optional[str] = None, user: dict = Depends(admin_user)):
+        q = {"unit_id": unit_id} if unit_id else {}
+        docs = await db.rental_deposits.find(q).sort("date", 1).to_list(2000)
+        return [ser(d) for d in docs]
+
+    @router.delete("/deposits/{did}")
+    async def delete_deposit(did: str, user: dict = Depends(admin_user)):
+        await db.rental_deposits.delete_one({"_id": oid(did)})
+        return {"ok": True}
+
+    # --------------------------------------------------------------- payouts
+    @router.post("/payouts")
+    async def create_payout(body: PayoutIn, user: dict = Depends(admin_user)):
+        valid_month(body.month)
+        if body.unit_id:
+            await require_unit(body.unit_id)
+        doc = body.model_dump()
+        doc["created_at"] = datetime.now(timezone.utc)
+        res = await db.rental_payouts.insert_one(doc)
+        return ser(await db.rental_payouts.find_one({"_id": res.inserted_id}))
+
+    @router.get("/payouts")
+    async def list_payouts(month: Optional[str] = None, user: dict = Depends(admin_user)):
+        q = {"month": month} if month else {}
+        docs = await db.rental_payouts.find(q).sort("date", 1).to_list(2000)
+        return [ser(d) for d in docs]
+
+    @router.put("/payouts/{pid}")
+    async def update_payout(pid: str, body: PayoutIn, user: dict = Depends(admin_user)):
+        valid_month(body.month)
+        if body.unit_id:
+            await require_unit(body.unit_id)
+        await db.rental_payouts.update_one({"_id": oid(pid)}, {"$set": body.model_dump()})
+        rec = await db.rental_payouts.find_one({"_id": oid(pid)})
+        if not rec:
+            raise HTTPException(status_code=404, detail="Payout not found")
+        return ser(rec)
+
+    @router.delete("/payouts/{pid}")
+    async def delete_payout(pid: str, user: dict = Depends(admin_user)):
+        await db.rental_payouts.delete_one({"_id": oid(pid)})
+        return {"ok": True}
+
+    # ------------------------------------------------------------- statement
     def unit_state(u: dict, month: str) -> str:
-        """active | upcoming (lease starts later) | ended | vacant"""
-        _, nxt = month_bounds(month)
-        last_day = str(date.fromordinal(nxt.toordinal() - 1))
-        first_day = str(month_bounds(month)[0])
+        first, last = month_bounds(month)
         ls, le = u.get("lease_start") or "", u.get("lease_end") or ""
-        if ls and ls > last_day:
+        if ls and ls > str(last):
             return "upcoming"
         if u.get("status") != "active":
             return "vacant"
-        if le and le < first_day:
+        if le and le < str(first):
             return "ended"
         return "active"
 
-    async def build_rent_roll(month: str) -> dict:
+    async def build_statement(month: str) -> dict:
         valid_month(month)
         units = await db.rental_units.find().sort("name", 1).to_list(500)
-        cols = await db.rent_collections.find({"month": month}).to_list(2000)
-        exps = await db.rental_expenses.find({"month": month}).to_list(2000)
-        all_cols = await db.rent_collections.find().to_list(5000)
+        payments = await db.rent_payments.find({"month": month}).to_list(2000)
+        deposits = await db.rental_deposits.find().to_list(3000)
+        payouts = await db.rental_payouts.find({"month": month}).to_list(2000)
+        bill_cache = {b["unit_id"]: b for b in
+                      await db.rental_bills.find({"month": month}).to_list(2000)}
         props = {str(p["_id"]): p.get("name") for p in await db.properties.find().to_list(200)}
         today = date.today().isoformat()
+        first, last = month_bounds(month)
 
-        rows = []
+        rows, buildings = [], {}
         for u in units:
             uid = str(u["_id"])
-            umonth = [c for c in cols if c["unit_id"] == uid]
-            uexp = [e for e in exps if e["unit_id"] == uid]
-            rent_collected = sum(float(c["amount"]) for c in umonth if c["kind"] == "rent")
-            deposit_in = sum(float(c["amount"]) for c in all_cols
-                             if c["unit_id"] == uid and c["kind"] == "deposit")
-            deposit_out = sum(float(c["amount"]) for c in all_cols
-                              if c["unit_id"] == uid and c["kind"] in ("deposit_refund", "deposit_deduction"))
-            active = lease_active(u, month)
             state = unit_state(u, month)
-            rent_amount = float(u.get("rent_amount", 0) or 0)
-            rent_due = rent_amount if active else 0.0
-            pending = rent_due - rent_collected
+            bill = await get_or_draft_bill(u, month)
+            bt = bill_totals(bill)
+            if state != "active":
+                bt = {**bt, "rent": 0.0, "maintenance": 0.0, "adhoc_collect": 0.0,
+                      "tenant_paid_on_my_behalf": 0.0, "total_to_collect": 0.0}
+
+            paid = [p for p in payments if p["unit_id"] == uid]
+            rent_paid = sum(float(p.get("rent_paid", 0)) for p in paid)
+            maint_paid = sum(float(p.get("maintenance_paid", 0)) for p in paid)
+            adhoc_paid = sum(float(p.get("adhoc_paid", 0)) for p in paid)
+            collected = rent_paid + maint_paid + adhoc_paid
+            balance = bt["total_to_collect"] - collected
+
+            dep_in = sum(float(d["amount"]) for d in deposits if d["unit_id"] == uid and d["kind"] == "deposit")
+            dep_out = sum(float(d["amount"]) for d in deposits
+                          if d["unit_id"] == uid and d["kind"] in ("deposit_refund", "deposit_deduction"))
+
             due_day = int(u.get("rent_due_day", 5) or 5)
             due_date = f"{month}-{min(max(due_day, 1), 28):02d}"
             status = ("upcoming" if state == "upcoming" else
                       "vacant" if state in ("vacant", "ended") else
-                      "paid" if pending <= 0 else
+                      "paid" if balance <= 0.005 else
                       "overdue" if due_date < today else "pending")
-            expense_total = sum(float(e["amount"]) for e in uexp)
-            on_behalf = sum(float(e["amount"]) for e in uexp if e.get("on_behalf_of_building"))
-            lease_end = u.get("lease_end") or ""
-            _, nxt = month_bounds(month)
-            window_end = str(date(nxt.year + (nxt.month == 12), (nxt.month % 12) + 1, 1))
-            expiring = bool(lease_end) and today <= lease_end < window_end
 
-            vacant_since = u.get("vacant_since") or (lease_end if status == "vacant" else "")
+            vacant_since = u.get("vacant_since") or ""
             vacant_days, lost_rent = 0, 0.0
             if status == "vacant" and vacant_since:
-                # Scope the idle window to the selected month so past months don't show today's figure.
-                month_last = str(date.fromordinal(nxt.toordinal() - 1))
-                end_ref = min(today, month_last)
                 try:
+                    end_ref = min(today, str(last))
                     vacant_days = max((date.fromisoformat(end_ref) - date.fromisoformat(vacant_since)).days, 0)
-                    lost_rent = r2(rent_amount * vacant_days / 30.44)
+                    lost_rent = r2(float(u.get("rent_amount", 0) or 0) * vacant_days / 30.44)
                 except ValueError:
                     vacant_days, lost_rent = 0, 0.0
+
+            items = bill.get("items") or []
+            maint_payable = bill.get("maintenance_payable")
+            maint_payable = bt["maintenance"] if maint_payable in (None, "") else r2(maint_payable)
+            adhoc_payable = sum(float(i.get("amount", 0)) for i in items
+                                if i.get("direction") == "collect" and i.get("pay_to_building"))
+            tenant_credit = sum(float(i.get("amount", 0)) for i in items
+                                if i.get("direction") == "tenant_paid" and i.get("pay_to_building"))
+            if state != "active":
+                maint_payable, adhoc_payable, tenant_credit = 0.0, 0.0, 0.0
+
+            bkey = u.get("building_property_id") or (u.get("building_name") or "").strip() or "unassigned"
+            bname = props.get(u.get("building_property_id") or "", "") or u.get("building_name") or "Unassigned"
+            b = buildings.setdefault(bkey, {"key": bkey, "building": bname, "payable": 0.0,
+                                            "paid": 0.0, "credits": 0.0, "units": [], "entries": []})
+            b["payable"] = r2(b["payable"] + maint_payable + adhoc_payable)
+            b["credits"] = r2(b["credits"] + tenant_credit)
+            if tenant_credit:
+                b["entries"].append({"kind": "tenant_credit", "label": f"{u.get('name')} — tenant paid on my behalf",
+                                     "amount": r2(tenant_credit), "date": ""})
+            b["units"].append({"unit_id": uid, "name": u.get("name"),
+                               "maintenance_payable": r2(maint_payable), "adhoc_payable": r2(adhoc_payable)})
 
             rows.append({
                 "unit_id": uid, "name": u.get("name"), "kind": u.get("kind"),
                 "ownership": u.get("ownership"), "owner_name": u.get("owner_name") or "",
-                "building": props.get(u.get("building_property_id") or "", ""),
+                "building": bname, "building_key": bkey,
                 "tenant_name": u.get("tenant_name") or "", "tenant_phone": u.get("tenant_phone") or "",
-                "rent_amount": r2(rent_amount),
-                "rent_due": r2(rent_due), "rent_collected": r2(rent_collected),
-                "pending": r2(max(pending, 0)), "advance": r2(max(-pending, 0)),
-                "due_date": due_date, "status": status,
-                "deposit_held": r2(deposit_in - deposit_out),
-                "deposit_expected": r2(u.get("deposit_amount", 0)),
-                "expenses": r2(expense_total), "on_behalf_of_building": r2(on_behalf),
-                "net_to_owner": r2(rent_collected - expense_total),
-                "lease_start": u.get("lease_start") or "", "lease_end": lease_end,
-                "lease_expiring_soon": expiring,
+                "rent_amount": r2(u.get("rent_amount", 0)),
+                "billed_rent": bt["rent"], "billed_maintenance": bt["maintenance"],
+                "adhoc_collect": bt["adhoc_collect"], "tenant_paid_on_my_behalf": bt["tenant_paid_on_my_behalf"],
+                "total_to_collect": bt["total_to_collect"], "items": items,
+                "rent_paid": r2(rent_paid), "maintenance_paid": r2(maint_paid), "adhoc_paid": r2(adhoc_paid),
+                "collected": r2(collected), "balance": r2(balance),
+                "rent_outstanding": r2(max(bt["rent"] - rent_paid, 0)),
+                "maintenance_outstanding": r2(max(bt["maintenance"] - maint_paid, 0)),
+                "adhoc_outstanding": r2(bt["adhoc_collect"] - bt["tenant_paid_on_my_behalf"] - adhoc_paid),
+                "deposit_held": r2(dep_in - dep_out), "deposit_expected": r2(u.get("deposit_amount", 0)),
+                "maintenance_payable_to_building": r2(maint_payable),
+                "adhoc_payable_to_building": r2(adhoc_payable),
+                "building_credit_by_tenant": r2(tenant_credit),
+                "bill_exists": not bill.get("is_draft"), "due_date": due_date, "status": status,
+                "lease_start": u.get("lease_start") or "", "lease_end": u.get("lease_end") or "",
+                "lease_months": u.get("lease_months") or 0,
                 "vacant_since": vacant_since, "vacant_days": vacant_days, "lost_rent": lost_rent,
+                # legacy keys kept so the combined overview keeps working
+                "rent_due": bt["total_to_collect"], "rent_collected": r2(collected),
+                "pending": r2(max(balance, 0)), "advance": r2(max(-balance, 0)),
+                "expenses": 0.0, "on_behalf_of_building": r2(tenant_credit),
+                "net_to_owner": r2(collected),
             })
 
-        building_tally = {}
-        for e in exps:
-            if not e.get("on_behalf_of_building"):
-                continue
-            key = e.get("building_property_id") or "unassigned"
-            b = building_tally.setdefault(key, {"building": props.get(key, "Unassigned"), "amount": 0.0, "items": []})
-            b["amount"] = r2(b["amount"] + float(e["amount"]))
-            b["items"].append({"description": e.get("description"), "category": e.get("category"),
-                               "amount": r2(e["amount"]), "date": e.get("date")})
+        for p in payouts:
+            bkey = p.get("building_property_id") or (p.get("building_name") or "").strip() or "unassigned"
+            bname = props.get(p.get("building_property_id") or "", "") or p.get("building_name") or "Unassigned"
+            b = buildings.setdefault(bkey, {"key": bkey, "building": bname, "payable": 0.0,
+                                            "paid": 0.0, "credits": 0.0, "units": [], "entries": []})
+            amt = r2(p.get("amount", 0))
+            if p.get("is_credit"):
+                b["credits"] = r2(b["credits"] + amt)
+            else:
+                b["paid"] = r2(b["paid"] + amt)
+            b["entries"].append({"kind": "credit" if p.get("is_credit") else "payout",
+                                 "label": f"{p.get('category', '')}{(' — ' + p['note']) if p.get('note') else ''}",
+                                 "amount": amt, "date": p.get("date", "")})
 
+        for b in buildings.values():
+            b["balance"] = r2(b["payable"] - b["paid"] - b["credits"])
+
+        active = [r for r in rows if r["status"] not in ("vacant", "upcoming")]
         totals = {
             "unit_count": len(rows),
-            "occupied": sum(1 for r in rows if r["status"] not in ("vacant", "upcoming")),
+            "occupied": len(active),
             "vacant": sum(1 for r in rows if r["status"] == "vacant"),
             "upcoming": sum(1 for r in rows if r["status"] == "upcoming"),
-            "rent_due": r2(sum(r["rent_due"] for r in rows)),
-            "rent_collected": r2(sum(r["rent_collected"] for r in rows)),
-            "pending": r2(sum(r["pending"] for r in rows)),
-            "overdue": r2(sum(r["pending"] for r in rows if r["status"] == "overdue")),
+            "billed_rent": r2(sum(r["billed_rent"] for r in rows)),
+            "billed_maintenance": r2(sum(r["billed_maintenance"] for r in rows)),
+            "adhoc_collect": r2(sum(r["adhoc_collect"] for r in rows)),
+            "tenant_paid_on_my_behalf": r2(sum(r["tenant_paid_on_my_behalf"] for r in rows)),
+            "total_to_collect": r2(sum(r["total_to_collect"] for r in rows)),
+            "rent_paid": r2(sum(r["rent_paid"] for r in rows)),
+            "maintenance_paid": r2(sum(r["maintenance_paid"] for r in rows)),
+            "adhoc_paid": r2(sum(r["adhoc_paid"] for r in rows)),
+            "collected": r2(sum(r["collected"] for r in rows)),
+            "balance": r2(sum(r["balance"] for r in rows)),
+            "overdue": r2(sum(r["balance"] for r in rows if r["status"] == "overdue")),
             "deposit_held": r2(sum(r["deposit_held"] for r in rows)),
-            "expenses": r2(sum(r["expenses"] for r in rows)),
-            "on_behalf_of_building": r2(sum(r["on_behalf_of_building"] for r in rows)),
-            "net_to_owner": r2(sum(r["net_to_owner"] for r in rows)),
-            "owned_units": sum(1 for r in rows if r["ownership"] == "own"),
-            "managed_units": sum(1 for r in rows if r["ownership"] == "managed"),
+            "building_payable": r2(sum(b["payable"] for b in buildings.values())),
+            "building_paid": r2(sum(b["paid"] for b in buildings.values())),
+            "building_credits": r2(sum(b["credits"] for b in buildings.values())),
+            "building_balance": r2(sum(b["balance"] for b in buildings.values())),
             "vacant_days": sum(r["vacant_days"] for r in rows),
             "lost_rent": r2(sum(r["lost_rent"] for r in rows)),
+            "bills_missing": sum(1 for r in rows if not r["bill_exists"] and r["status"] not in ("vacant", "upcoming")),
+            # legacy keys for the combined overview
+            "rent_due": r2(sum(r["total_to_collect"] for r in rows)),
+            "rent_collected": r2(sum(r["collected"] for r in rows)),
+            "pending": r2(sum(max(r["balance"], 0) for r in rows)),
+            "expenses": r2(sum(b["paid"] for b in buildings.values())),
+            "on_behalf_of_building": r2(sum(b["credits"] for b in buildings.values())),
+            "net_to_owner": r2(sum(r["collected"] for r in rows)),
         }
         return {"month": month, "rows": rows, "totals": totals,
-                "building_tally": list(building_tally.values())}
+                "buildings": list(buildings.values()),
+                "building_tally": [{"building": b["building"], "amount": b["credits"],
+                                    "items": [{"description": e["label"], "category": e["kind"],
+                                               "amount": e["amount"], "date": e["date"]}
+                                              for e in b["entries"] if e["kind"] != "payout"]}
+                                   for b in buildings.values() if b["credits"]]}
+
+    @router.get("/statement")
+    async def statement(month: str, user: dict = Depends(admin_user)):
+        return await build_statement(month)
 
     @router.get("/rent-roll")
     async def rent_roll(month: str, user: dict = Depends(admin_user)):
-        return await build_rent_roll(month)
+        return await build_statement(month)
 
-    global _build_rent_roll
-    _build_rent_roll = build_rent_roll
+    global _statement_builder
+    _statement_builder = build_statement
 
+    # ---------------------------------------------------------------- export
     @router.get("/export")
-    async def export_rent_roll(month: str, format: str = Query("csv"), user: dict = Depends(admin_user)):
-        data = await build_rent_roll(month)
+    async def export_statement(month: str, format: str = Query("csv"), user: dict = Depends(admin_user)):
+        data = await build_statement(month)
         t = data["totals"]
-        head = ["Unit", "Type", "Building", "Ownership", "Owner", "Tenant", "Rent due", "Collected",
-                "Pending", "Status", "Deposit held", "Expenses", "Of which on behalf of building",
-                "Net to owner", "Lease end"]
+        head = ["Property", "Building", "Tenant", "Rent", "Maintenance", "Ad-hoc to collect",
+                "Paid by tenant for me", "Total to collect", "Rent received", "Maintenance received",
+                "Ad-hoc received", "Total received", "Balance", "Status", "Deposit held"]
 
-        def row_vals(r):
-            return [r["name"], r["kind"], r["building"], r["ownership"], r["owner_name"], r["tenant_name"],
-                    r["rent_due"], r["rent_collected"], r["pending"], r["status"], r["deposit_held"],
-                    r["expenses"], r["on_behalf_of_building"], r["net_to_owner"], r["lease_end"]]
+        def vals(r):
+            return [r["name"], r["building"], r["tenant_name"], r["billed_rent"], r["billed_maintenance"],
+                    r["adhoc_collect"], r["tenant_paid_on_my_behalf"], r["total_to_collect"], r["rent_paid"],
+                    r["maintenance_paid"], r["adhoc_paid"], r["collected"], r["balance"], r["status"],
+                    r["deposit_held"]]
+
+        bhead = ["Building", "Payable", "Paid", "Credits", "Balance"]
+
+        def bvals(b):
+            return [b["building"], b["payable"], b["paid"], b["credits"], b["balance"]]
 
         if format == "csv":
             buf = io.StringIO()
             w = csv.writer(buf)
-            w.writerow([f"SocietyHub Rent Roll — {month}"])
+            w.writerow([f"SocietyHub Property Statement — {month}"])
             w.writerow([])
-            w.writerow(["Units", t["unit_count"], "Occupied", t["occupied"], "Vacant", t["vacant"]])
-            w.writerow(["Rent due", t["rent_due"], "Collected", t["rent_collected"],
-                        "Pending", t["pending"], "Overdue", t["overdue"]])
-            w.writerow(["Deposits held", t["deposit_held"], "Expenses", t["expenses"],
-                        "On behalf of buildings", t["on_behalf_of_building"], "Net to owners", t["net_to_owner"]])
-            w.writerow(["Vacant units", t["vacant"], "Idle days", t["vacant_days"],
-                        "Rent forgone to vacancy", t["lost_rent"]])
+            w.writerow(["Properties", t["unit_count"], "Occupied", t["occupied"], "Vacant", t["vacant"]])
+            w.writerow(["To collect", t["total_to_collect"], "Collected", t["collected"], "Balance", t["balance"]])
+            w.writerow(["Owed to buildings", t["building_payable"], "Paid", t["building_paid"],
+                        "Credits", t["building_credits"], "Balance", t["building_balance"]])
             w.writerow([])
             w.writerow(head)
             for r in data["rows"]:
-                w.writerow(row_vals(r))
-            if data["building_tally"]:
-                w.writerow([])
-                w.writerow(["Paid on behalf of building", "Amount"])
-                for b in data["building_tally"]:
-                    w.writerow([b["building"], b["amount"]])
+                w.writerow(vals(r))
+            w.writerow([])
+            w.writerow(bhead)
+            for b in data["buildings"]:
+                w.writerow(bvals(b))
             out = buf.getvalue().encode("utf-8")
             return StreamingResponse(io.BytesIO(out), media_type="text/csv",
-                                     headers={"Content-Disposition": f'attachment; filename="rent-roll-{month}.csv"'})
+                                     headers={"Content-Disposition": f'attachment; filename="properties-{month}.csv"'})
 
         from reportlab.lib.pagesizes import A4, landscape
         from reportlab.lib import colors
@@ -402,155 +634,76 @@ def make_router(db):
         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
         buf = io.BytesIO()
-        doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title=f"Rent roll {month}")
+        doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title=f"Properties {month}")
         styles = getSampleStyleSheet()
-        story = [Paragraph("SocietyHub — Rent Roll & Owner Payout", styles["Title"]),
+        story = [Paragraph("SocietyHub — Property Statement", styles["Title"]),
                  Paragraph(f"Period: {month}", styles["Normal"]), Spacer(1, 10)]
-        summary = [["Units", t["unit_count"], "Occupied", t["occupied"], "Vacant", t["vacant"]],
-                   ["Rent due", t["rent_due"], "Collected", t["rent_collected"], "Pending", t["pending"]],
-                   ["Deposits held", t["deposit_held"], "Expenses", t["expenses"], "Net to owners", t["net_to_owner"]],
-                   ["Vacant units", t["vacant"], "Idle days", t["vacant_days"], "Rent forgone", t["lost_rent"]]]
+        summary = [["To collect", t["total_to_collect"], "Collected", t["collected"], "Balance", t["balance"]],
+                   ["Owed to buildings", t["building_payable"], "Paid", t["building_paid"],
+                    "Credits", t["building_credits"]],
+                   ["Deposits held", t["deposit_held"], "Vacant", t["vacant"], "Rent forgone", t["lost_rent"]]]
         st = Table(summary, hAlign="LEFT")
-        st.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-                                ("FONTSIZE", (0, 0), (-1, -1), 8)]))
+        st.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey), ("FONTSIZE", (0, 0), (-1, -1), 8)]))
         story += [st, Spacer(1, 14)]
-        rows = [head] + [row_vals(r) for r in data["rows"]]
-        tbl = Table(rows, repeatRows=1)
-        style = [("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
-                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-                 ("FONTSIZE", (0, 0), (-1, -1), 7),
-                 ("ALIGN", (6, 1), (-1, -1), "RIGHT")]
-        for i, r in enumerate(data["rows"], start=1):
-            if r["status"] == "overdue":
-                style.append(("TEXTCOLOR", (9, i), (9, i), colors.HexColor("#DC2626")))
-            elif r["status"] == "paid":
-                style.append(("TEXTCOLOR", (9, i), (9, i), colors.HexColor("#16A34A")))
-        tbl.setStyle(TableStyle(style))
-        story += [tbl]
-        if data["building_tally"]:
-            story += [Spacer(1, 14), Paragraph("Paid on behalf of buildings (tally separately)", styles["Heading3"])]
-            bt = Table([["Building", "Amount"]] + [[b["building"], b["amount"]] for b in data["building_tally"]],
-                       hAlign="LEFT")
-            bt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey), ("FONTSIZE", (0, 0), (-1, -1), 8)]))
-            story += [bt]
+        tbl = Table([head] + [vals(r) for r in data["rows"]], repeatRows=1)
+        tbl.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                                 ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
+                                 ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                                 ("FONTSIZE", (0, 0), (-1, -1), 7),
+                                 ("ALIGN", (3, 1), (-1, -1), "RIGHT")]))
+        story += [tbl, Spacer(1, 16), Paragraph("Owed to buildings / associations", styles["Heading3"])]
+        bt = Table([bhead] + [bvals(b) for b in data["buildings"]], repeatRows=1, hAlign="LEFT")
+        bt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+                                ("FONTSIZE", (0, 0), (-1, -1), 7),
+                                ("ALIGN", (1, 1), (-1, -1), "RIGHT")]))
+        story += [bt]
         doc.build(story)
         buf.seek(0)
         return StreamingResponse(buf, media_type="application/pdf",
-                                 headers={"Content-Disposition": f'attachment; filename="rent-roll-{month}.pdf"'})
+                                 headers={"Content-Disposition": f'attachment; filename="properties-{month}.pdf"'})
 
-    @router.get("/collections/{cid}/receipt")
-    async def collection_receipt(cid: str, user: dict = Depends(admin_user)):
-        col = await db.rent_collections.find_one({"_id": oid(cid)})
-        if not col:
-            raise HTTPException(status_code=404, detail="Entry not found")
-        unit = await db.rental_units.find_one({"_id": oid(col["unit_id"])})
-        if not unit:
-            raise HTTPException(status_code=404, detail="Property not found")
-        receipt_no = f"RCPT-{col['month'].replace('-', '')}-{str(col['_id'])[-6:].upper()}"
-
-        cols = await db.rent_collections.find({"unit_id": col["unit_id"], "month": col["month"],
-                                               "kind": "rent"}).to_list(500)
-        paid_this_month = r2(sum(float(c["amount"]) for c in cols))
-        rent = float(unit.get("rent_amount", 0) or 0)
-        balance = r2(rent - paid_this_month) if col["kind"] == "rent" else 0.0
+    # --------------------------------------------------------------- receipt
+    @router.get("/payments/{pid}/receipt")
+    async def payment_receipt(pid: str, user: dict = Depends(admin_user)):
+        pay = await db.rent_payments.find_one({"_id": oid(pid)})
+        if not pay:
+            raise HTTPException(status_code=404, detail="Payment not found")
+        unit = await require_unit(pay["unit_id"])
+        receipt_no = f"RCPT-{pay['month'].replace('-', '')}-{str(pay['_id'])[-6:].upper()}"
 
         from reportlab.lib.pagesizes import A4
         from reportlab.lib import colors
         from reportlab.lib.styles import getSampleStyleSheet
         from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
 
-        labels = {"rent": "Rent Receipt", "deposit": "Security Deposit Receipt",
-                  "deposit_refund": "Deposit Refund Voucher", "deposit_deduction": "Deposit Deduction Note"}
         buf = io.BytesIO()
         doc = SimpleDocTemplate(buf, pagesize=A4, title=receipt_no)
         styles = getSampleStyleSheet()
-        story = [Paragraph(labels.get(col["kind"], "Receipt"), styles["Title"]),
-                 Paragraph(f"Receipt no. {receipt_no}", styles["Normal"]), Spacer(1, 16)]
-        detail = [["Property", unit.get("name", "")],
-                  ["Address", unit.get("address", "") or "—"],
-                  ["Tenant", unit.get("tenant_name", "") or "—"],
-                  ["Received by", "Self (owner)" if unit.get("ownership") == "own"
-                   else f"{user.get('name')} on behalf of {unit.get('owner_name') or 'owner'}"],
-                  ["For the month of", col["month"]],
-                  ["Date received", col.get("date", "")],
-                  ["Payment mode", str(col.get("mode", "")).upper()],
-                  ["Amount", f"Rs. {r2(col['amount']):,.2f}"]]
-        if col["kind"] == "rent":
-            detail += [["Monthly rent", f"Rs. {rent:,.2f}"],
-                       ["Total paid this month", f"Rs. {paid_this_month:,.2f}"],
-                       ["Balance", "Nil" if balance <= 0 else f"Rs. {balance:,.2f}"]]
-        if col.get("notes"):
-            detail.append(["Notes", col["notes"]])
-        tbl = Table(detail, colWidths=[150, 320], hAlign="LEFT")
+        rows = [["Property", unit.get("name", "")],
+                ["Tenant", unit.get("tenant_name", "") or "—"],
+                ["For the month of", pay["month"]],
+                ["Date received", pay.get("date", "")],
+                ["Mode", str(pay.get("mode", "")).upper()],
+                ["Rent", f"Rs. {r2(pay.get('rent_paid')):,.2f}"],
+                ["Maintenance", f"Rs. {r2(pay.get('maintenance_paid')):,.2f}"],
+                ["Ad-hoc", f"Rs. {r2(pay.get('adhoc_paid')):,.2f}"],
+                ["Total received", f"Rs. {r2(pay.get('total')):,.2f}"]]
+        if pay.get("notes"):
+            rows.append(["Notes", pay["notes"]])
+        tbl = Table(rows, colWidths=[150, 320], hAlign="LEFT")
         tbl.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
                                  ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1F5F9")),
                                  ("FONTSIZE", (0, 0), (-1, -1), 9),
-                                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                                 ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
-                                 ("TOPPADDING", (0, 0), (-1, -1), 7)]))
-        story += [tbl, Spacer(1, 26),
-                  Paragraph("This is a computer-generated receipt for the amount stated above.", styles["Normal"]),
-                  Spacer(1, 34), Paragraph("_______________________<br/>Authorised signature", styles["Normal"])]
+                                 ("TOPPADDING", (0, 0), (-1, -1), 7),
+                                 ("BOTTOMPADDING", (0, 0), (-1, -1), 7)]))
+        story = [Paragraph("Payment Receipt", styles["Title"]),
+                 Paragraph(f"Receipt no. {receipt_no}", styles["Normal"]), Spacer(1, 16), tbl,
+                 Spacer(1, 26), Paragraph("This is a computer-generated receipt.", styles["Normal"]),
+                 Spacer(1, 34), Paragraph("_______________________<br/>Authorised signature", styles["Normal"])]
         doc.build(story)
         buf.seek(0)
         return StreamingResponse(buf, media_type="application/pdf",
                                  headers={"Content-Disposition": f'attachment; filename="{receipt_no}.pdf"'})
-
-    @router.post("/demo/seed")
-    async def seed_rentals(user: dict = Depends(admin_user)):
-        if await db.rental_units.find_one({}):
-            return {"ok": True, "already": True,
-                    "note": "Sample data skipped — real properties already exist."}
-        prop = await db.properties.find_one({"name": "Sunrise Residency"})
-        pid = str(prop["_id"]) if prop else None
-        month = date.today().strftime("%Y-%m")
-        specs = [
-            {"name": "Sunrise 101 (own)", "kind": "flat", "ownership": "own", "owner_name": "Self",
-             "building_property_id": pid, "rent_amount": 18000, "deposit_amount": 100000,
-             "tenant_name": "Arjun Rao", "tenant_phone": "9876511101", "rent_due_day": 5,
-             "lease_start": "2026-01-01", "lease_end": "2026-12-31"},
-            {"name": "MG Road Shop", "kind": "shop", "ownership": "own", "owner_name": "Self",
-             "address": "MG Road, Bengaluru", "rent_amount": 42000, "deposit_amount": 250000,
-             "tenant_name": "Cafe Verde", "tenant_phone": "9876511102", "rent_due_day": 1,
-             "lease_start": "2025-06-01", "lease_end": "2027-05-31"},
-            {"name": "Whitefield House", "kind": "house", "ownership": "managed",
-             "owner_name": "Suresh Iyer (friend)", "address": "Whitefield, Bengaluru",
-             "rent_amount": 26000, "deposit_amount": 150000, "tenant_name": "Neha Gupta",
-             "tenant_phone": "9876511103", "rent_due_day": 10,
-             "lease_start": "2026-03-01", "lease_end": "2026-09-30"},
-        ]
-        ids = []
-        for s in specs:
-            doc = UnitIn(**s).model_dump()
-            doc.update({"created_by": user["id"], "created_at": datetime.now(timezone.utc)})
-            res = await db.rental_units.insert_one(doc)
-            ids.append(str(res.inserted_id))
-
-        await db.rent_collections.insert_many([
-            {"unit_id": ids[0], "month": month, "kind": "rent", "amount": 18000,
-             "date": f"{month}-04", "mode": "upi", "notes": "", "created_at": datetime.now(timezone.utc)},
-            {"unit_id": ids[0], "month": month, "kind": "deposit", "amount": 100000,
-             "date": "2026-01-01", "mode": "bank", "notes": "Lease start", "created_at": datetime.now(timezone.utc)},
-            {"unit_id": ids[1], "month": month, "kind": "rent", "amount": 20000,
-             "date": f"{month}-02", "mode": "bank", "notes": "Part payment", "created_at": datetime.now(timezone.utc)},
-            {"unit_id": ids[2], "month": month, "kind": "deposit", "amount": 150000,
-             "date": "2026-03-01", "mode": "bank", "notes": "", "created_at": datetime.now(timezone.utc)},
-        ])
-        await db.rental_expenses.insert_many([
-            {"unit_id": ids[0], "month": month, "category": "society_maintenance",
-             "description": "Sunrise maintenance paid for flat 101", "amount": 4614.38,
-             "date": f"{month}-06", "on_behalf_of_building": True, "building_property_id": pid,
-             "media": [], "created_at": datetime.now(timezone.utc)},
-            {"unit_id": ids[1], "month": month, "category": "repair",
-             "description": "Shutter repair", "amount": 3200, "date": f"{month}-09",
-             "on_behalf_of_building": False, "building_property_id": None, "media": [],
-             "created_at": datetime.now(timezone.utc)},
-            {"unit_id": ids[2], "month": month, "category": "tax",
-             "description": "Property tax instalment", "amount": 7800, "date": f"{month}-12",
-             "on_behalf_of_building": False, "building_property_id": None, "media": [],
-             "created_at": datetime.now(timezone.utc)},
-        ])
-        return {"ok": True, "unit_ids": ids}
 
     return router

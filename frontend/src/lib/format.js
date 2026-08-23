@@ -3,6 +3,9 @@ export const money = (n) =>
   "₹" +
   Math.abs(Number(n || 0)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+export const plainAmt = (n) =>
+  "Rs." + Math.abs(Number(n || 0)).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
 export const litres = (n) =>
   Number(n || 0).toLocaleString("en-IN", { maximumFractionDigits: 2 }) + " L";
 

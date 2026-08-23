@@ -24,8 +24,9 @@ const maintenanceNav = [
 const rentalNav = [
   { to: "/rentals", label: "Rent Roll", icon: LayoutDashboard, id: "rent-dashboard" },
   { to: "/rentals/units", label: "Properties", icon: Home, id: "rent-units" },
-  { to: "/rentals/collections", label: "Rent & Deposits", icon: Wallet, id: "rent-collections" },
-  { to: "/rentals/expenses", label: "Bills Paid", icon: ReceiptText, id: "rent-expenses" },
+  { to: "/rentals/bills", label: "Monthly Bills", icon: ReceiptText, id: "rent-bills" },
+  { to: "/rentals/collections", label: "Collections", icon: Wallet, id: "rent-collections" },
+  { to: "/rentals/payouts", label: "Payouts to Buildings", icon: Building2, id: "rent-payouts" },
   { to: "/rentals/report", label: "Reports", icon: FileSpreadsheet, id: "rent-report" },
   { to: "/overview", label: "Combined Overview", icon: LayoutGrid, id: "overview" },
 ];

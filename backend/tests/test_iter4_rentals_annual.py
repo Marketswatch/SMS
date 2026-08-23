@@ -18,6 +18,13 @@ import pytest
 import requests
 from dotenv import dotenv_values
 
+# STALE (iteration 6): rentals rebuilt — /rentals/collections, /rentals/expenses and
+# /rentals/demo/seed no longer exist (the seed also polluted the user's live preview data).
+# Rentals coverage is now in tests/test_iter6_rentals_rebuild.py; the annual-statement
+# coverage here is duplicated by backend_test.py.
+pytestmark = pytest.mark.skip(reason="rentals module rebuilt in iteration 6; see test_iter6_rentals_rebuild.py")
+
+
 frontend_env = dotenv_values("/app/frontend/.env")
 base_url = os.environ.get("REACT_APP_BACKEND_URL") or frontend_env.get("REACT_APP_BACKEND_URL")
 if not base_url:
