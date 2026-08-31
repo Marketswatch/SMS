@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { FileDown, FileText } from "lucide-react";
+import { FileDown, FileText, FileSpreadsheet } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
 import { useApp } from "@/context/AppContext";
 import { useRentStatement } from "@/hooks/useRentStatement";
@@ -60,6 +60,9 @@ export default function RentReport() {
   return (
     <div>
       <PageHeader title="Property Reports" subtitle={`Collections & building settlement · ${monthLabel(rentMonth)}`}>
+        <Button variant="outline" onClick={() => download("xlsx")} disabled={busy} data-testid="rent-export-xlsx-btn">
+          <FileSpreadsheet className="w-4 h-4 mr-2" /> Excel
+        </Button>
         <Button variant="outline" onClick={() => download("csv")} disabled={busy} data-testid="rent-export-csv-btn">
           <FileDown className="w-4 h-4 mr-2" /> CSV
         </Button>

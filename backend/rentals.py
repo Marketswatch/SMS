@@ -17,6 +17,7 @@ from pydantic import BaseModel
 from bson import ObjectId
 
 import auth as A
+import xlsx as X
 
 UNIT_KINDS = ["flat", "shop", "house", "office", "other"]
 OWNERSHIP = ["own", "managed"]
@@ -164,6 +165,102 @@ def require_reference(mode: str, reference: str):
     if str(mode).lower() != "cash" and not str(reference or "").strip():
         raise HTTPException(status_code=400,
                             detail=f"A reference number is required for {mode or 'non-cash'} payments")
+
+
+def build_rentals_workbook(data, month, pays, outs, deps, unit_name):
+    """Property month pack: one styled sheet per report, tinted per property."""
+    t = data["totals"]
+    period = month_name(month)
+    wb = X.new_book()
+    props = X.Palette(X.OWNER_TINTS)
+
+    ws = X.sheet(wb, "Rent Roll")
+    row = X.title(ws, 1, "Property Management — Rent Roll", span=17,
+                  sub=f"{period} · all amounts in INR")
+    head = ["S.No", "Property", "Building", "Tenant", "Rent", "Maintenance", "Ad-hoc to collect",
+            "Paid by tenant for me", "Previous dues", "Total to collect", "Rent received",
+            "Maintenance received", "Ad-hoc received", "Total received", "Balance", "Status", "Deposit held"]
+    rows, fills = [], []
+    for i, r in enumerate(data["rows"], start=1):
+        rows.append([i, r["name"], r["building"], r["tenant_name"], r["billed_rent"], r["billed_maintenance"],
+                     r["adhoc_collect"], r["tenant_paid_on_my_behalf"], r.get("carry_forward", 0),
+                     r["total_to_collect"], r["rent_paid"], r["maintenance_paid"], r["adhoc_paid"],
+                     r["collected"], r["balance"], str(r["status"]).title(), r["deposit_held"]])
+        fills.append(props.fill(r["name"]))
+    total = ["", "TOTAL", "", "", "", "", "", "", "", t["total_to_collect"], "", "", "",
+             t["collected"], t["balance"], "", t["deposit_held"]]
+    row, hdr = X.table(ws, row, head, rows, money_cols=range(5, 16), signed_cols=(15,),
+                       fills=fills, total_row=total,
+                       widths=[6, 24, 20, 20, 11, 13, 14, 16, 13, 14, 13, 15, 14, 13, 12, 11, 13])
+    X.freeze(ws, f"C{hdr + 1}")
+    row = X.legend(ws, row, [
+        ("Properties", t["unit_count"]), ("Occupied", t["occupied"]), ("Vacant", t["vacant"]),
+        ("To collect", float(t["total_to_collect"])), ("Collected", float(t["collected"])),
+        ("Balance outstanding", float(t["balance"])), ("Deposits held", float(t["deposit_held"])),
+        ("Rent forgone on vacancy", float(t["lost_rent"])),
+    ], label="Summary")
+    row = X.colour_key(ws, row, props, "Colour key — property")
+
+    ws2 = X.sheet(wb, "Collections")
+    row = X.title(ws2, 1, "Collections from tenants", span=9, sub=period)
+    chead = ["S.No", "Date", "Property", "Rent", "Maintenance", "Ad-hoc", "Total", "Mode", "Reference", "Notes"]
+    crows, cfills = [], []
+    for i, p in enumerate(pays, start=1):
+        name = unit_name.get(p.get("unit_id"), "—")
+        tot = r2(float(p.get("rent_paid", 0) or 0) + float(p.get("maintenance_paid", 0) or 0)
+                 + float(p.get("adhoc_paid", 0) or 0))
+        crows.append([i, dmy(p.get("date")), name, float(p.get("rent_paid", 0) or 0),
+                      float(p.get("maintenance_paid", 0) or 0), float(p.get("adhoc_paid", 0) or 0), tot,
+                      MODE_LABELS.get(str(p.get("mode", "")).lower(), p.get("mode", "")),
+                      p.get("reference", "") or "—", p.get("notes", "")])
+        cfills.append(props.fill(name))
+    row, hdr = X.table(ws2, row, chead, crows, money_cols=(4, 5, 6, 7), fills=cfills,
+                       total_row=["", "", "TOTAL", "", "", "", float(t["collected"]), "", "", ""],
+                       widths=[6, 12, 24, 12, 14, 12, 12, 15, 20, 28])
+    X.freeze(ws2, f"D{hdr + 1}")
+
+    ws3 = X.sheet(wb, "Payouts")
+    row = X.title(ws3, 1, "Payouts to buildings / associations", span=9, sub=period)
+    phead = ["S.No", "Date", "Building", "Property", "Category", "Amount", "Mode", "Reference", "Type", "Note"]
+    prows, pfills = [], []
+    for i, p in enumerate(outs, start=1):
+        name = unit_name.get(p.get("unit_id"), "—")
+        prows.append([i, dmy(p.get("date")), p.get("building_name", ""), name, p.get("category", ""),
+                      float(p.get("amount", 0) or 0),
+                      "—" if p.get("is_credit") else MODE_LABELS.get(str(p.get("mode", "")).lower(), p.get("mode", "")),
+                      p.get("reference", "") or "—", "Credit" if p.get("is_credit") else "Paid out",
+                      p.get("note", "")])
+        pfills.append(props.fill(name))
+    ptotal = ["", "", "TOTAL", "", "", float(t["building_paid"]), "", "",
+              f"Credits {t['building_credits']}", f"Balance {t['building_balance']}"]
+    row, hdr = X.table(ws3, row, phead, prows, money_cols=(6,), fills=pfills, total_row=ptotal,
+                       widths=[6, 12, 22, 22, 20, 12, 15, 20, 12, 26])
+    X.freeze(ws3, f"D{hdr + 1}")
+
+    ws4 = X.sheet(wb, "Building Settlement")
+    row = X.title(ws4, 1, "Owed to buildings / associations", span=6, sub=period)
+    bhead = ["S.No", "Building / association", "Payable", "Paid", "Credits", "Balance"]
+    brows = [[i, b["building"], b["payable"], b["paid"], b["credits"], b["balance"]]
+             for i, b in enumerate(data["buildings"], start=1)]
+    btotal = ["", "TOTAL", float(t["building_payable"]), float(t["building_paid"]),
+              float(t["building_credits"]), float(t["building_balance"])]
+    X.table(ws4, row, bhead, brows, money_cols=(3, 4, 5, 6), signed_cols=(6,), total_row=btotal,
+            widths=[6, 30, 14, 14, 14, 14])
+
+    ws5 = X.sheet(wb, "Deposits")
+    row = X.title(ws5, 1, "Deposits ledger", span=6, sub=period)
+    dhead = ["S.No", "Date", "Property", "Type", "Amount", "Notes"]
+    drows, dfills = [], []
+    for i, d in enumerate(deps, start=1):
+        name = unit_name.get(d.get("unit_id"), "—")
+        drows.append([i, dmy(d.get("date")), name, str(d.get("kind", "")).replace("_", " ").title(),
+                      float(d.get("amount", 0) or 0), d.get("notes", "")])
+        dfills.append(props.fill(name))
+    X.table(ws5, row, dhead, drows, money_cols=(5,), fills=dfills,
+            total_row=["", "", "TOTAL", "", float(t["deposit_held"]), "held across all properties"],
+            widths=[6, 12, 24, 18, 13, 30])
+
+    return X.to_bytes(wb)
 
 
 def make_router(db):
@@ -660,6 +757,9 @@ def make_router(db):
     # ---------------------------------------------------------------- export
     @router.get("/export")
     async def export_statement(month: str, format: str = Query("csv"), user: dict = Depends(admin_user)):
+        if format not in ("csv", "pdf", "xlsx"):
+            raise HTTPException(status_code=400,
+                                detail=f"Unsupported format '{format}'. Use one of: csv, pdf, xlsx")
         data = await build_statement(month)
         t = data["totals"]
         head = ["S.No", "Property", "Building", "Tenant", "Rent", "Maintenance", "Ad-hoc to collect",
@@ -681,6 +781,17 @@ def make_router(db):
         def bvals(b):
             bcounter["n"] += 1
             return [bcounter["n"], b["building"], b["payable"], b["paid"], b["credits"], b["balance"]]
+
+        if format == "xlsx":
+            first, last = month_bounds(month)
+            pays = [ser(d) for d in await db.rent_payments.find({"month": month}).sort("date", 1).to_list(1000)]
+            outs = [ser(d) for d in await db.rental_payouts.find({"month": month}).sort("date", 1).to_list(1000)]
+            deps = [ser(d) for d in await db.rental_deposits.find(
+                {"date": {"$gte": first.isoformat(), "$lte": last.isoformat()}}).sort("date", 1).to_list(500)]
+            unit_name = {u["id"]: u["name"] for u in [ser(d) for d in await db.rental_units.find().to_list(500)]}
+            book = build_rentals_workbook(data, month, pays, outs, deps, unit_name)
+            return StreamingResponse(book, media_type=X.XLSX_MEDIA,
+                                     headers={"Content-Disposition": f'attachment; filename="societyhub-properties-{month}.xlsx"'})
 
         if format == "csv":
             buf = io.StringIO()

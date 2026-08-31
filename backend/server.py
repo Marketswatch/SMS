@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import csv
 import uuid
 import logging
@@ -23,6 +24,7 @@ import auth as A
 from engine import compute_statement, RECURRING_TYPES, ADHOC_TYPES
 import rentals
 import storage as S
+import xlsx as X
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("societyhub")
@@ -163,6 +165,7 @@ def next_month(month: str) -> str:
 
 
 async def ensure_period(property_id: str, month: str) -> dict:
+    valid_month(month)
     p = await db.periods.find_one({"property_id": property_id, "month": month})
     if p:
         return p
@@ -220,6 +223,22 @@ async def delete_property(pid: str, user: dict = Depends(admin_user)):
 
 
 # ---------------------------------------------------------------- flats
+MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+
+
+def valid_month(month: str) -> str:
+    if not month or not MONTH_RE.match(month):
+        raise HTTPException(status_code=400, detail="Month must be in YYYY-MM format")
+    return month
+
+
+def valid_format(fmt: str, allowed=("csv", "pdf", "xlsx")) -> str:
+    if fmt not in allowed:
+        raise HTTPException(status_code=400,
+                            detail=f"Unsupported format '{fmt}'. Use one of: {', '.join(allowed)}")
+    return fmt
+
+
 def dmy(d) -> str:
     """DD-MM-YYYY for every date shown in an export or receipt."""
     s = str(d or "")[:10]
@@ -598,8 +617,16 @@ async def delete_payment(pid: str, user: dict = Depends(admin_user)):
 
 
 # ---------------------------------------------------------------- statement
-async def build_statement(property_id: str, month: str) -> dict:
-    period = await ensure_period(property_id, month)
+async def read_period(property_id: str, month: str) -> dict:
+    """Read-only period lookup — never creates a period document."""
+    valid_month(month)
+    return await db.periods.find_one({"property_id": property_id, "month": month}) or {
+        "property_id": property_id, "month": month, "status": "open", "carry_in": {}}
+
+
+async def build_statement(property_id: str, month: str, ensure: bool = True) -> dict:
+    valid_month(month)
+    period = await ensure_period(property_id, month) if ensure else await read_period(property_id, month)
     prop = await db.properties.find_one({"_id": oid(property_id)})
     if not prop:
         raise HTTPException(status_code=404, detail="Property not found")
@@ -619,7 +646,7 @@ async def build_statement(property_id: str, month: str) -> dict:
 
 @api.get("/statement")
 async def statement(property_id: str, month: str, user: dict = Depends(current_user)):
-    stmt = await build_statement(property_id, month)
+    stmt = await build_statement(property_id, month, ensure=False)
     if user.get("role") in {"owner", "resident"}:
         flat = await db.flats.find_one({"$or": [{"owner_user_id": user["id"]}, {"tenant_user_id": user["id"]}],
                                         "property_id": property_id})
@@ -704,6 +731,7 @@ async def annual_statement(property_id: str, year: int, user: dict = Depends(cur
 @api.get("/annual/export")
 async def annual_export(property_id: str, year: int, format: str = Query("csv"),
                         user: dict = Depends(admin_user)):
+    valid_format(format, ("csv", "pdf"))
     data = await annual_statement(property_id, year, user)
     t = data["totals"]
     head = ["S.No", "Flat", "Owner", "Consumption L", "Water cost", "Recurring", "Maintenance",
@@ -781,7 +809,7 @@ async def combined_overview(month: str, user: dict = Depends(admin_user)):
         if not period:
             continue
         stmt = period.get("snapshot") if period.get("status") == "locked" and period.get("snapshot") \
-            else await build_statement(pid, month)
+            else await build_statement(pid, month, ensure=False)
         t = stmt["totals"]
         buildings.append({
             "property_id": pid, "name": p.get("name"), "status": period.get("status", "open"),
@@ -847,10 +875,163 @@ async def reset_month(property_id: str, month: str, user: dict = Depends(admin_u
 
 
 # ---------------------------------------------------------------- MIS export
+# ---------------------------------------------------------------- MIS excel pack
+def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
+                       owner_label, pay_label, combined):
+    """One workbook, one sheet per report: the full month pack."""
+    t = stmt["totals"]
+    prop = stmt["property"]["name"]
+    period = mon_label(month)
+    wb = X.new_book()
+    owners = X.Palette(X.OWNER_TINTS)
+    payers = X.Palette(X.PAYER_TINTS)
+    meters_pal = X.Palette(X.METER_TINTS)
+
+    # --- 1. Water reconciliation -------------------------------------------------
+    ws = X.sheet(wb, "Water Reconciliation")
+    row = X.title(ws, 1, f"{prop} — Water Reconciliation", span=15,
+                  sub=f"{period} · period {stmt['status']} · all amounts in INR")
+    head = ["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered cost (reserve)",
+            "Total water cost", "Misc", "Total amount", "Bal brought forward",
+            "Advance paid (fronting)", "Amount paid", "Balance to pay / receive",
+            "Date of payment", "Status"]
+    data, fills = [], []
+    for i, r in enumerate(stmt["rows"], start=1):
+        data.append([i, r["flat_number"], r.get("floor", "") or "—", r["owner_name"],
+                     r["water_own_cost"], r["reserve_share"], r["water_cost"],
+                     round(r["recurring_share"] + r["maintenance_share"], 2), r["base_cost"],
+                     r["carry_in"], r["contributions"], r["received"], r["net"],
+                     dmy(r.get("last_paid_on")), pay_label(r)])
+        fills.append(owners.fill(r["owner_name"]))
+    total = ["", "", "", "TOTAL", round(t["total_water_spend"] - t["reserve_value"], 2), t["reserve_value"],
+             t["total_water_spend"], round(t["recurring_total"] + t["maintenance_total"], 2),
+             t["billable_total"], t["total_carry_in"], t["total_contributions"], t["total_received"],
+             t["net_position"], "", ""]
+    row, hdr = X.table(ws, row, head, data, money_cols=range(5, 14), signed_cols=(13,),
+                       fills=fills, total_row=total,
+                       widths=[6, 10, 10, 30, 13, 15, 13, 12, 13, 14, 15, 13, 15, 14, 11])
+    X.freeze(ws, f"E{hdr + 1}")
+    row = X.legend(ws, row, [
+        ("Total expense for the month", float(t["billable_total"])),
+        (f"Split between (no. of houses)", t["flat_count"]),
+        ("Expense per head", round(t["billable_total"] / (t["flat_count"] or 1), 2)),
+        ("Total receivable (owes)", float(t["total_owes"])),
+        ("Total payable (owed to owners)", float(t["total_owed"])),
+        ("Net position", float(t["net_position"])),
+    ], label="Summary")
+    row = X.colour_key(ws, row, owners, "Colour key — owner")
+
+    # --- 2. Water usage as per meters -------------------------------------------
+    ws2 = X.sheet(wb, "Water Usage (Meters)")
+    row = X.title(ws2, 1, f"{prop} — Water Usage Charges (as per meter readings)", span=10, sub=period)
+    mhead = ["S.No", "House", "Floor", "Owner", "Meter number", "Starting unit", "Ending unit",
+             "Consumed units", "Water charges", "Combined (per flat)"]
+    mdata, mfills = [], []
+    for i, m in enumerate(stmt["meters"], start=1):
+        mdata.append([i, m.get("flat_number", ""), m.get("floor", "") or "—", m.get("owner_name", ""),
+                      m.get("label", ""), m.get("opening"), m.get("closing"), m.get("consumption"),
+                      m.get("charge"), combined.get(m.get("flat_id"), "")])
+        mfills.append(meters_pal.fill(m.get("meter_id"), m.get("label")))
+    mtotal = ["", "", "", "", "TOTAL", "", "", t["total_consumed"], t["metered_charges"], ""]
+    row, hdr = X.table(ws2, row, mhead, mdata, money_cols=(9, 10), fills=mfills, total_row=mtotal,
+                       widths=[6, 10, 10, 28, 18, 14, 14, 15, 14, 18])
+    X.freeze(ws2, f"E{hdr + 1}")
+    row = X.legend(ws2, row, [
+        ("Total lorries this month", t["tanker_count"]),
+        ("Total water received (L)", float(t["total_litres"])),
+        ("Total water cost (lorry + tips)", float(t["total_water_spend"])),
+        ("Cost per litre of water", float(t["avg_cost_per_litre"])),
+        ("Total units consumed (as per meter)", float(t["total_consumed"])),
+        ("Total water charges (metered)", float(t["metered_charges"])),
+        ("Total non-metered consumption (L)", float(t["reserve_litres"])),
+        ("Total non-metered cost", float(t["reserve_value"])),
+        (f"Non-metered cost split between {t['flat_count']} houses — per house share", float(t["reserve_share"])),
+    ], label="Water legend")
+    row = X.colour_key(ws2, row, meters_pal, "Colour key — meter")
+
+    # --- 3. Tanker purchases -----------------------------------------------------
+    ws3 = X.sheet(wb, "Tanker Purchases")
+    row = X.title(ws3, 1, f"{prop} — Water Purchases", span=12, sub=period)
+    thead = ["S.No", "Date", "Supplier", "Sump (L)", "Syntex (L)", "Total (L)", "Lorry amount",
+             "Tips", "Total cost", "Cost / L", "Lorry paid by", "Tips paid by"]
+    tdata, tfills = [], []
+    tanker_payers = set()
+    for i, tk in enumerate(tankers, start=1):
+        litres = float(tk.get("qty_sump", 0) or 0) + float(tk.get("qty_syntex", 0) or 0)
+        tips = float(tk.get("tips_amount", 0) or 0)
+        cost = float(tk.get("amount", 0) or 0) + tips
+        payer = flat_name.get(tk.get("payer_flat_id"), "—")
+        tips_payer = flat_name.get(tk.get("tips_payer_flat_id") or tk.get("payer_flat_id"), "—") if tips else "—"
+        tdata.append([i, dmy(tk.get("date")), tk.get("supplier", ""), float(tk.get("qty_sump", 0) or 0),
+                      float(tk.get("qty_syntex", 0) or 0), litres, float(tk.get("amount", 0) or 0), tips, cost,
+                      round(cost / litres, 4) if litres else 0,
+                      f"{payer} ({tk.get('payer_type', '')})",
+                      f"{tips_payer} ({tk.get('tips_payer_type') or tk.get('payer_type', '')})" if tips else "—"])
+        tfills.append(payers.fill(tk.get("payer_flat_id"), f"Flat {payer}"))
+        tanker_payers.add(tk.get("payer_flat_id"))
+    ttotal = ["", "", "TOTAL", "", "", float(t["total_litres"]),
+              round(t["total_water_spend"] - t["total_tips"], 2), float(t["total_tips"]),
+              float(t["total_water_spend"]), float(t["avg_cost_per_litre"]), "", ""]
+    row, hdr = X.table(ws3, row, thead, tdata, money_cols=(7, 8, 9, 10), fills=tfills, total_row=ttotal,
+                       widths=[6, 12, 22, 11, 11, 11, 13, 10, 12, 10, 22, 22])
+    X.freeze(ws3, f"C{hdr + 1}")
+    row = X.legend(ws3, row, [
+        ("Total expense", float(t["total_water_spend"])),
+        ("Split between (no. of houses)", t["flat_count"]),
+        ("Expense per head", round(t["total_water_spend"] / (t["flat_count"] or 1), 2)),
+    ], label="Summary")
+    row = X.colour_key(ws3, row, payers, "Colour key — fronted by", only=tanker_payers)
+
+    # --- 4. Charges --------------------------------------------------------------
+    ws4 = X.sheet(wb, "Charges")
+    row = X.title(ws4, 1, f"{prop} — Recurring & One-time Charges", span=8, sub=period)
+    chead = ["S.No", "Bucket", "Type", "Description", "Person", "Amount", "Fronted by", "As", "Date"]
+    charge_payers = set()
+    for bucket, kinds in (("Recurring", RECURRING_TYPES), ("One-time / repairs", ADHOC_TYPES)):
+        subset = [c for c in charges if c.get("charge_type") in kinds]
+        row = X.section(ws4, row, f"{bucket} — {len(subset)} entr{'y' if len(subset) == 1 else 'ies'}", span=9)
+        cdata, cfills = [], []
+        for i, c in enumerate(subset, start=1):
+            payer = flat_name.get(c.get("payer_flat_id"), "—")
+            cdata.append([i, bucket, c.get("charge_type", ""), c.get("description", ""), c.get("person_name", ""),
+                          float(c.get("amount", 0) or 0), payer, c.get("payer_type", ""), dmy(c.get("date"))])
+            cfills.append(payers.fill(c.get("payer_flat_id"), f"Flat {payer}"))
+            charge_payers.add(c.get("payer_flat_id"))
+        subtotal = round(sum(float(c.get("amount", 0) or 0) for c in subset), 2)
+        ctotal = ["", "", "TOTAL", "", "", subtotal, "",
+                  f"Per head {round(subtotal / (t['flat_count'] or 1), 2)}", ""]
+        row, chdr = X.table(ws4, row, chead, cdata, money_cols=(6,), fills=cfills, total_row=ctotal,
+                            widths=[6, 18, 16, 30, 18, 12, 14, 10, 12])
+        if bucket == "Recurring":
+            X.freeze(ws4, f"D{chdr + 1}")
+    row = X.colour_key(ws4, row, payers, "Colour key — fronted by", only=charge_payers)
+
+    # --- 5. Ledger ---------------------------------------------------------------
+    ws5 = X.sheet(wb, "Ledger")
+    row = X.title(ws5, 1, f"{prop} — Payments & Payouts Ledger", span=7, sub=period)
+    lhead = ["S.No", "Date", "Flat No.", "Owner", "Direction", "Paid by", "Amount", "Notes"]
+    ldata, lfills = [], []
+    owner_of = {r["flat_id"]: r["owner_name"] for r in stmt["rows"]}
+    for i, p in enumerate(payments, start=1):
+        ldata.append([i, dmy(p.get("date")), flat_name.get(p.get("flat_id"), "—"),
+                      owner_of.get(p.get("flat_id"), ""),
+                      "Received" if p.get("direction") != "payout" else "Payout",
+                      str(p.get("payer_type", "")).title(), float(p.get("amount", 0) or 0), p.get("notes", "")])
+        lfills.append(owners.fill(owner_of.get(p.get("flat_id"))))
+    ltotal = ["", "", "", "TOTAL", "", "", float(t["total_received"]), f"Payouts {t['total_payouts']}"]
+    row, hdr = X.table(ws5, row, lhead, ldata, money_cols=(7,), fills=lfills, total_row=ltotal,
+                       widths=[6, 12, 10, 26, 12, 12, 13, 34])
+    X.freeze(ws5, f"C{hdr + 1}")
+    row = X.colour_key(ws5, row, owners, "Colour key — owner")
+
+    return X.to_bytes(wb)
+
+
 @api.get("/mis/export")
 async def mis_export(property_id: str, month: str, format: str = Query("csv"),
                      user: dict = Depends(admin_user)):
-    stmt = await build_statement(property_id, month)
+    valid_format(format)
+    stmt = await build_statement(property_id, month, ensure=False)
     t = stmt["totals"]
 
     def owner_label(r):
@@ -864,6 +1045,19 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
     combined = {}
     for m in stmt["meters"]:
         combined[m.get("flat_id")] = round(combined.get(m.get("flat_id"), 0) + float(m.get("charge") or 0), 2)
+    if format == "xlsx":
+        flats = [ser(d) for d in await db.flats.find({"property_id": property_id}).sort("number", 1).to_list(500)]
+        flat_name = {f["id"]: f["number"] for f in flats}
+        tankers = [ser(d) for d in await db.tankers.find({"property_id": property_id, "month": month}).sort("date", 1).to_list(500)]
+        charges = [ser(d) for d in await db.charges.find({"property_id": property_id, "month": month}).sort("date", 1).to_list(1000)]
+        payments = [ser(d) for d in await db.payments.find({"property_id": property_id, "month": month}).sort("date", 1).to_list(1000)]
+        book = build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
+                                  owner_label, pay_label, combined)
+        name = stmt["property"]["name"].replace(" ", "-").lower()
+        return StreamingResponse(book, media_type=X.XLSX_MEDIA,
+                                 headers={"Content-Disposition": f'attachment; filename="societyhub-{name}-{month}.xlsx"'})
+
+
 
     if format == "csv":
         buf = io.StringIO()

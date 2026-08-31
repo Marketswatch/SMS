@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { toast } from "sonner";
-import { FileDown, FileText } from "lucide-react";
+import { FileDown, FileText, FileSpreadsheet } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
 import { useApp } from "@/context/AppContext";
 import { PageHeader, Card, Stat, Empty } from "@/components/Common";
@@ -36,6 +36,9 @@ export default function MIS() {
   return (
     <div>
       <PageHeader title="Month-End MIS" subtitle={`${statement?.property?.name || ""} · ${monthLabel(month)} · ${statement?.status || ""}`}>
+        <Button variant="outline" onClick={() => download("xlsx")} disabled={busy} data-testid="export-xlsx-btn">
+          <FileSpreadsheet className="w-4 h-4 mr-2" /> Excel
+        </Button>
         <Button variant="outline" onClick={() => download("csv")} disabled={busy} data-testid="export-csv-btn">
           <FileDown className="w-4 h-4 mr-2" /> CSV
         </Button>
