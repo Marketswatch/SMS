@@ -14,8 +14,8 @@ API = f"{BASE}/api"
 
 RECON_HEADERS = ["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered cost (reserve)",
                  "Total water cost", "Misc", "Total amount", "Bal brought forward",
-                 "Advance paid (fronting)", "Amount paid", "Balance to pay / receive",
-                 "Date of payment", "Status"]
+                 "Advance payment paid by", "Amount paid", "Balance to pay / receive",
+                 "Date of payment", "Paid by", "Status"]
 
 
 @pytest.fixture(scope="session")
@@ -110,13 +110,13 @@ class TestReconCsv:
     def test_section_title_present(self, csv_text):
         assert "Water reconciliation — owner statement" in csv_text
 
-    def test_exact_15_headers_in_order(self, csv_text):
+    def test_exact_16_headers_in_order(self, csv_text):
         rows = _rows(csv_text)
         hdr = [r for r in rows if r and r[0] == "S.No" and r[1] == "Flat No."]
         assert hdr, "reconciliation header row not found"
         assert hdr[0] == RECON_HEADERS, hdr[0]
 
-    def test_data_rows_have_15_cells_and_serials(self, csv_text, statement):
+    def test_data_rows_have_16_cells_and_serials(self, csv_text, statement):
         rows = _rows(csv_text)
         i = [n for n, r in enumerate(rows) if r and r[0] == "S.No" and r[1] == "Flat No."][0]
         data = []
@@ -127,7 +127,7 @@ class TestReconCsv:
         assert len(data) == len(statement["rows"]), (len(data), len(statement["rows"]))
         assert [int(r[0]) for r in data] == list(range(1, len(data) + 1))
         for r in data:
-            assert len(r) == 15, r
+            assert len(r) == 16, r
 
     def test_total_row_and_per_head_line(self, csv_text):
         rows = _rows(csv_text)
@@ -135,7 +135,7 @@ class TestReconCsv:
         tail = rows[i + 1:]
         total = [r for r in tail if len(r) > 3 and r[3] == "TOTAL"]
         assert total, "TOTAL row missing from reconciliation CSV section"
-        assert len(total[0]) == 15
+        assert len(total[0]) == 16
         flat = "\n".join(",".join(r) for r in tail).lower()
         assert "total expense" in flat and "split between" in flat and "exp per head" in flat
 
@@ -156,7 +156,7 @@ class TestReconCsv:
         for r in rows[i + 1:]:
             if not (r and r[0].isdigit()):
                 break
-            by_flat[r[1]] = (r[13], r[14])
+            by_flat[r[1]] = (r[13], r[15])
         assert by_flat
         for s in statement["rows"]:
             date, label = by_flat[s["flat_number"]]
@@ -197,7 +197,7 @@ class TestReconPdf:
     def test_both_sections_and_headers(self, pdf_text):
         low = pdf_text.lower().replace("\n", " ")
         for token in ["water reconciliation", "owner statement", "metered cost", "non-metered",
-                      "total water", "misc", "bal brought", "advance paid", "amount",
+                      "total water", "misc", "bal brought", "advance payment", "amount",
                       "balance to", "date of", "status", "water usage charges", "combined"]:
             assert token in low, f"missing '{token}' in PDF"
 

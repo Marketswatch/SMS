@@ -59,6 +59,11 @@ class Palette:
         self.labels[key] = label or self.labels.get(key) or str(key)
         return PatternFill("solid", fgColor=self._map[key])
 
+    def tint(self, key, label=None):
+        """Hex tint for a key (registers it), or None."""
+        self.fill(key, label)
+        return self._map.get(key)
+
 
 def new_book():
     wb = Workbook()

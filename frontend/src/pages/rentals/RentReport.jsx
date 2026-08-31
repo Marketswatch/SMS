@@ -7,6 +7,7 @@ import { useRentStatement } from "@/hooks/useRentStatement";
 import { PageHeader, Card, Stat, Empty } from "@/components/Common";
 import { Button } from "@/components/ui/button";
 import { money, monthLabel, dmy } from "@/lib/format";
+import { useSort, SortTh } from "@/lib/sort";
 
 export default function RentReport() {
   const { rentMonth } = useApp();
@@ -30,15 +31,38 @@ export default function RentReport() {
   const managed = stmt?.rows?.filter((r) => r.ownership === "managed") || [];
   const vacant = stmt?.rows?.filter((r) => r.status === "vacant") || [];
 
-  const table = (rows, testId) => (
+  const rentAccessors = {
+    name: (r) => r.name,
+    tenant_name: (r) => r.tenant_name || "",
+    billed_rent: (r) => r.billed_rent,
+    billed_maintenance: (r) => r.billed_maintenance,
+    adhoc_collect: (r) => r.adhoc_collect,
+    total_to_collect: (r) => r.total_to_collect,
+    collected: (r) => r.collected,
+    balance: (r) => r.balance,
+    deposit_held: (r) => r.deposit_held,
+  };
+  const sorters = {
+    "owned": useSort(owned, rentAccessors, "name"),
+    "managed": useSort(managed, rentAccessors, "name"),
+  };
+
+  const table = (rows, testId) => {
+    const { sorted, sort, toggle } = sorters[testId];
+    const th = (label, key, align) => (
+      <SortTh label={label} sortKey={key} sort={sort} toggle={toggle} align={align} testId={`${testId}-sort-${key}`} />
+    );
+    return (
     <div className="overflow-x-auto">
       <table className="data-table">
-        <thead><tr><th className="text-right">S.No</th><th>Property</th><th>Tenant</th><th className="text-right">Rent</th><th className="text-right">Maint.</th>
-          <th className="text-right">Ad-hoc</th><th className="text-right">To collect</th>
-          <th className="text-right">Received</th><th className="text-right">Balance</th>
-          <th className="text-right">Deposit held</th></tr></thead>
+        <thead><tr><th className="text-right">S.No</th>
+          {th("Property", "name")}{th("Tenant", "tenant_name")}
+          {th("Rent", "billed_rent", "right")}{th("Maint.", "billed_maintenance", "right")}
+          {th("Ad-hoc", "adhoc_collect", "right")}{th("To collect", "total_to_collect", "right")}
+          {th("Received", "collected", "right")}{th("Balance", "balance", "right")}
+          {th("Deposit held", "deposit_held", "right")}</tr></thead>
         <tbody>
-          {rows.map((r, i) => (
+          {sorted.map((r, i) => (
             <tr key={r.unit_id} data-testid={`${testId}-row-${r.name}`}>
               <td className="num text-slate-500">{i + 1}</td>
               <td className="font-semibold">{r.name}</td>
@@ -55,7 +79,8 @@ export default function RentReport() {
         </tbody>
       </table>
     </div>
-  );
+    );
+  };
 
   return (
     <div>

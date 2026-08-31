@@ -17,8 +17,8 @@ TOTAL_FILL = "C9D7EE"
 
 RECON_HEADERS = ["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered cost (reserve)",
                  "Total water cost", "Misc", "Total amount", "Bal brought forward",
-                 "Advance paid (fronting)", "Amount paid", "Balance to pay / receive",
-                 "Date of payment", "Status"]
+                 "Advance payment paid by", "Amount paid", "Balance to pay / receive",
+                 "Date of payment", "Paid by", "Status"]
 MIS_SHEETS = ["Water Reconciliation", "Water Usage (Meters)", "Tanker Purchases", "Charges", "Ledger"]
 RENT_SHEETS = ["Rent Roll", "Collections", "Payouts", "Building Settlement", "Deposits"]
 DMY = re.compile(r"^\d{2}-\d{2}-\d{4}$")
@@ -114,9 +114,9 @@ class TestMisWorkbook:
         ws = wb["Water Reconciliation"]
         hr = find_header_row(ws, "S.No")
         assert hr, "header row not found"
-        got = [str(ws.cell(row=hr, column=j).value) for j in range(1, 16)]
+        got = [str(ws.cell(row=hr, column=j).value) for j in range(1, 17)]
         assert got == RECON_HEADERS
-        assert ws.cell(row=hr, column=16).value is None
+        assert ws.cell(row=hr, column=17).value is None
 
     def test_header_style_all_sheets(self, wb):
         for name in MIS_SHEETS:
@@ -262,9 +262,9 @@ class TestMisWorkbook:
     def test_tanker_sheet(self, wb, client, prop, month):
         ws = wb["Tanker Purchases"]
         hr = find_header_row(ws, "S.No")
-        heads = [str(ws.cell(row=hr, column=j).value) for j in range(1, 13)]
-        assert heads == ["S.No", "Date", "Supplier", "Sump (L)", "Syntex (L)", "Total (L)",
-                         "Lorry amount", "Tips", "Total cost", "Cost / L",
+        heads = [str(ws.cell(row=hr, column=j).value) for j in range(1, 14)]
+        assert heads == ["S.No", "Booking date", "Delivery date", "Supplier", "Sump (L)", "Syntex (L)",
+                         "Total (L)", "Lorry amount", "Tips", "Total cost", "Cost / L",
                          "Lorry paid by", "Tips paid by"]
         tk = client.get(f"{API}/tankers", params={"property_id": prop["id"], "month": month}).json()
         assert len(tk) > 0
@@ -272,15 +272,15 @@ class TestMisWorkbook:
         for i in range(len(tk)):
             row = hr + 1 + i
             assert ws.cell(row=row, column=1).value == i + 1
-            assert DMY.match(str(ws.cell(row=row, column=2).value))
-            lorry = str(ws.cell(row=row, column=11).value)
-            tips = str(ws.cell(row=row, column=12).value)
+            assert DMY.match(str(ws.cell(row=row, column=3).value))
+            lorry = str(ws.cell(row=row, column=12).value)
+            tips = str(ws.cell(row=row, column=13).value)
             if tips != "—" and tips.split(" (")[0] != lorry.split(" (")[0]:
                 diff_payer = True
         assert diff_payer, "no tanker where tips payer differs from lorry payer"
         trow = hr + 1 + len(tk)
-        assert ws.cell(row=trow, column=3).value == "TOTAL"
-        assert rgb(ws.cell(row=trow, column=3)) == TOTAL_FILL
+        assert ws.cell(row=trow, column=4).value == "TOTAL"
+        assert rgb(ws.cell(row=trow, column=4)) == TOTAL_FILL
         text = cells_text(ws)
         assert "Summary" in text and "Expense per head" in text
 

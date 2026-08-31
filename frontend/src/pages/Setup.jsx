@@ -22,7 +22,7 @@ export default function Setup() {
   const [users, setUsers] = useState([]);
 
   const [newProp, setNewProp] = useState({ name: "", address: "" });
-  const [flat, setFlat] = useState({ property_id: "", number: "", floor: "", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
+  const [flat, setFlat] = useState({ property_id: "", number: "", floor: "", opening_dues: "", opening_dues_payer: "owner", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
   const [meter, setMeter] = useState({ flat_id: "", label: "", opening: "" });
   const [tank, setTank] = useState({ name: "", tank_type: "sump", capacity: "" });
   const [payers, setPayers] = useState({});
@@ -74,12 +74,14 @@ export default function Setup() {
     const target = flat.property_id || propertyId;
     try {
       await api.post("/flats", {
-        property_id: target, number: flat.number, floor: flat.floor, owner_name: flat.owner_name,
+        property_id: target, number: flat.number, floor: flat.floor,
+        opening_dues: Number(flat.opening_dues || 0), opening_dues_payer: flat.opening_dues_payer,
+        owner_name: flat.owner_name,
         owner_user_id: flat.owner_user_id || null, owner_phone: flat.owner_phone,
         tenant_name: flat.tenant_name, tenant_user_id: flat.tenant_user_id || null,
         tenant_phone: flat.tenant_phone,
       });
-      setFlat({ property_id: target, number: "", floor: "", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
+      setFlat({ property_id: target, number: "", floor: "", opening_dues: "", opening_dues_payer: "owner", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
       toast.success(`Flat added to ${properties.find((p) => p.id === target)?.name || "building"}`);
       if (target !== propertyId) setPropertyId(target);
       load();
@@ -242,6 +244,27 @@ export default function Setup() {
                     </SelectContent>
                   </Select>
                 </div>
+                <div>
+                  <Label className="label-caps">Opening / outstanding dues</Label>
+                  <Input type="number" inputMode="decimal" step="any" className="mt-2 h-11 mono" data-testid="flat-opening-dues-input"
+                         placeholder="0.00"
+                         value={flat.opening_dues} onChange={(e) => setFlat({ ...flat, opening_dues: e.target.value })} />
+                  <p className="text-xs text-slate-500 mt-1">
+                    Dues carried in from before SocietyHub. Shows as "Bal brought forward" on every statement
+                    until it is paid off.
+                  </p>
+                </div>
+                <div>
+                  <Label className="label-caps">Outstanding dues payable by</Label>
+                  <Select value={flat.opening_dues_payer}
+                          onValueChange={(v) => setFlat({ ...flat, opening_dues_payer: v })}>
+                    <SelectTrigger className="mt-2 h-11" data-testid="flat-dues-payer-select"><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="owner">Owner</SelectItem>
+                      <SelectItem value="tenant">Tenant</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
                 <Button type="submit" data-testid="add-flat-btn" className="bg-slate-900 text-white h-11 w-full">
                   <Plus className="w-4 h-4 mr-2" /> Add flat
                 </Button>
@@ -251,7 +274,7 @@ export default function Setup() {
               {!flats.length ? <Empty testId="flats-empty" title="No flats yet" hint="Each flat is one equal share of common costs." /> : (
                 <div className="overflow-x-auto">
                   <table className="data-table">
-                    <thead><tr><th className="text-right">S.No</th><th>Building / Flat</th><th>Floor</th><th>Owner</th><th>Owner phone</th><th>Tenant</th><th className="text-right">Meters</th><th /></tr></thead>
+                    <thead><tr><th className="text-right">S.No</th><th>Building / Flat</th><th>Floor</th><th>Owner</th><th className="text-right">Opening dues</th><th>Owner phone</th><th>Tenant</th><th className="text-right">Meters</th><th /></tr></thead>
                     <tbody>
                       {flats.map((f, i) => (
                         <tr key={f.id} data-testid={`flat-config-row-${f.number}`}>
@@ -276,6 +299,14 @@ export default function Setup() {
                             </Select>
                           </td>
                           <td>{f.owner_name}</td>
+                          <td className="num" data-testid={`flat-dues-${f.number}`}>
+                            {money(f.opening_dues || 0)}
+                            {!!f.opening_dues && (
+                              <span className="block text-[10px] text-slate-400 capitalize">
+                                by {f.opening_dues_payer || "owner"}
+                              </span>
+                            )}
+                          </td>
                           <td className="mono text-slate-500">
                             <Input className="h-9 w-32 mono" type="tel" inputMode="tel" placeholder="Add phone"
                                    data-testid={`flat-phone-edit-${f.number}`}

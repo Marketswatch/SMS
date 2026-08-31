@@ -11,6 +11,7 @@ import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { money, litres, num, monthLabel, dmy } from "@/lib/format";
+import { useSort, SortTh } from "@/lib/sort";
 import { useStatement } from "@/hooks/useStatement";
 
 export default function Water() {
@@ -22,7 +23,7 @@ export default function Water() {
   const { statement } = useStatement(propertyId, month, tick);
 
   const blank = {
-    date: `${month}-01`, qty_sump: "", qty_syntex: "", amount: "", payer_flat_id: "",
+    booking_date: "", date: `${month}-01`, qty_sump: "", qty_syntex: "", amount: "", payer_flat_id: "",
     payer_type: property?.default_payers?.water || "tenant", tips_amount: "", tips_payer_flat_id: "",
     tips_payer_type: property?.default_payers?.tips || "tenant", supplier: "", notes: "",
   };
@@ -49,7 +50,7 @@ export default function Water() {
   const addTanker = async (e) => {
     e.preventDefault();
     const payload = {
-      property_id: propertyId, month, date: form.date,
+      property_id: propertyId, month, date: form.date, booking_date: form.booking_date || "",
       qty_sump: Number(form.qty_sump || 0), qty_syntex: Number(form.qty_syntex || 0),
       amount: Number(form.amount || 0), payer_flat_id: form.payer_flat_id || null,
       payer_type: form.payer_type, tips_amount: Number(form.tips_amount || 0),
@@ -67,6 +68,7 @@ export default function Water() {
   const editTanker = (tk) => {
     setEditId(tk.id);
     setForm({
+      booking_date: tk.booking_date || "",
       date: tk.date || `${month}-01`, qty_sump: String(tk.qty_sump ?? ""), qty_syntex: String(tk.qty_syntex ?? ""),
       amount: String(tk.amount ?? ""), payer_flat_id: tk.payer_flat_id || "", payer_type: tk.payer_type || "owner",
       tips_amount: String(tk.tips_amount ?? ""), tips_payer_flat_id: tk.tips_payer_flat_id || "",
@@ -93,6 +95,30 @@ export default function Water() {
 
   const flatName = (id) => flats.find((f) => f.id === id)?.number || "—";
   const t = statement?.totals;
+
+  const { sorted: sortedTankers, sort: tkSort, toggle: tkToggle } = useSort(tankers, {
+    booking_date: (tk) => tk.booking_date || "",
+    date: (tk) => tk.date || "",
+    qty_sump: (tk) => Number(tk.qty_sump || 0),
+    qty_syntex: (tk) => Number(tk.qty_syntex || 0),
+    total_qty: (tk) => Number(tk.total_qty || 0),
+    amount: (tk) => Number(tk.amount || 0),
+    tips_amount: (tk) => Number(tk.tips_amount || 0),
+    total_cost: (tk) => Number(tk.amount || 0) + Number(tk.tips_amount || 0),
+    cost_per_litre: (tk) => (Number(tk.amount || 0) + Number(tk.tips_amount || 0)) / (Number(tk.total_qty) || 1),
+    payer: (tk) => flatName(tk.payer_flat_id),
+    tips_payer: (tk) => flatName(tk.tips_payer_flat_id || tk.payer_flat_id),
+  }, "date");
+
+  const { sorted: sortedReadings, sort: rdSort, toggle: rdToggle } = useSort(readings.map((r) => ({
+    ...r, flat_number: flatName(r.flat_id),
+  })), {
+    label: (r) => r.label,
+    flat_number: (r) => r.flat_number,
+    opening: (r) => Number(r.opening || 0),
+    closing: (r) => (r.closing === "" || r.closing === null ? -1 : Number(r.closing)),
+    consumption: (r) => (r.closing === "" || r.closing === null ? -1 : Number(r.closing) - Number(r.opening)),
+  }, "floor");
 
   return (
     <div>
@@ -124,11 +150,25 @@ export default function Water() {
                   )}>
               {locked ? <p className="text-sm text-amber-700">This period is locked.</p> : (
                 <form onSubmit={addTanker} className="space-y-4">
-                  <div>
-                    <Label className="label-caps">Date</Label>
-                    <Input type="date" className="mt-2 h-11" required data-testid="tanker-date-input"
-                           value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label className="label-caps">Booking date</Label>
+                      <Input type="date" className="mt-2 h-11" data-testid="tanker-booking-date-input"
+                             max={form.date || undefined}
+                             value={form.booking_date}
+                             onChange={(e) => setForm({ ...form, booking_date: e.target.value })} />
+                    </div>
+                    <div>
+                      <Label className="label-caps">Delivery date</Label>
+                      <Input type="date" className="mt-2 h-11" required data-testid="tanker-date-input"
+                             min={form.booking_date || undefined}
+                             value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} />
+                    </div>
                   </div>
+                  <p className="text-xs text-slate-500 -mt-2">
+                    Water enters the reserve on the <b>delivery date</b>, which also decides the month this
+                    purchase belongs to. Delivery cannot be before booking.
+                  </p>
                   <div className="grid grid-cols-2 gap-3">
                     <div>
                       <Label className="label-caps">To sump (L)</Label>
@@ -209,16 +249,25 @@ export default function Water() {
                 <div className="overflow-x-auto">
                   <table className="data-table">
                     <thead>
-                      <tr><th className="text-right">S.No</th><th>Date</th><th className="text-right">Sump</th><th className="text-right">Syntex</th>
-                        <th className="text-right">Total</th><th className="text-right">Lorry</th>
-                        <th className="text-right">Tips</th><th className="text-right">Total cost</th>
-                        <th className="text-right">₹/L</th><th>Lorry paid by</th><th>Tips paid by</th>
+                      <tr><th className="text-right">S.No</th>
+                        <SortTh label="Booking" sortKey="booking_date" sort={tkSort} toggle={tkToggle} testId="tanker-sort-booking" />
+                        <SortTh label="Delivery" sortKey="date" sort={tkSort} toggle={tkToggle} testId="tanker-sort-date" />
+                        <SortTh label="Sump" sortKey="qty_sump" sort={tkSort} toggle={tkToggle} align="right" testId="tanker-sort-sump" />
+                        <SortTh label="Syntex" sortKey="qty_syntex" sort={tkSort} toggle={tkToggle} align="right" testId="tanker-sort-syntex" />
+                        <SortTh label="Total" sortKey="total_qty" sort={tkSort} toggle={tkToggle} align="right" testId="tanker-sort-total" />
+                        <SortTh label="Lorry" sortKey="amount" sort={tkSort} toggle={tkToggle} align="right" testId="tanker-sort-amount" />
+                        <SortTh label="Tips" sortKey="tips_amount" sort={tkSort} toggle={tkToggle} align="right" testId="tanker-sort-tips" />
+                        <SortTh label="Total cost" sortKey="total_cost" sort={tkSort} toggle={tkToggle} align="right" testId="tanker-sort-cost" />
+                        <SortTh label="₹/L" sortKey="cost_per_litre" sort={tkSort} toggle={tkToggle} align="right" testId="tanker-sort-perlitre" />
+                        <SortTh label="Lorry paid by" sortKey="payer" sort={tkSort} toggle={tkToggle} testId="tanker-sort-payer" />
+                        <SortTh label="Tips paid by" sortKey="tips_payer" sort={tkSort} toggle={tkToggle} testId="tanker-sort-tipspayer" />
                         <th>Media</th><th /></tr>
                     </thead>
                     <tbody>
-                      {tankers.map((tk, i) => (
+                      {sortedTankers.map((tk, i) => (
                         <tr key={tk.id} data-testid={`tanker-row-${tk.id}`}>
                           <td className="num text-slate-500">{i + 1}</td>
+                          <td className="text-slate-500">{dmy(tk.booking_date)}</td>
                           <td>{dmy(tk.date)}</td>
                           <td className="num">{num(tk.qty_sump, 0)}</td>
                           <td className="num">{num(tk.qty_syntex, 0)}</td>
@@ -254,7 +303,7 @@ export default function Water() {
                     </tbody>
                     <tfoot>
                       <tr className="bg-slate-50 font-semibold" data-testid="tankers-footer">
-                        <td colSpan={4}>Total Expense · split between {t?.flat_count || 0} house{(t?.flat_count || 0) === 1 ? "" : "s"}</td>
+                        <td colSpan={5}>Total Expense · split between {t?.flat_count || 0} house{(t?.flat_count || 0) === 1 ? "" : "s"}</td>
                         <td className="num">{num(t?.total_litres, 0)}</td>
                         <td className="num">{money((t?.total_water_spend || 0) - (t?.total_tips || 0))}</td>
                         <td className="num">{money(t?.total_tips)}</td>
@@ -290,11 +339,15 @@ export default function Water() {
                 ))}
                 <div className="overflow-x-auto">
                   <table className="data-table">
-                    <thead><tr><th className="text-right">S.No</th><th>Meter</th><th>Building / Flat</th><th className="text-right">Opening</th>
-                      <th className="text-right">Closing</th><th className="text-right">Consumption</th>
+                    <thead><tr><th className="text-right">S.No</th>
+                      <SortTh label="Meter" sortKey="label" sort={rdSort} toggle={rdToggle} testId="reading-sort-meter" />
+                      <SortTh label="Building / Flat" sortKey="floor" sort={rdSort} toggle={rdToggle} testId="reading-sort-flat" />
+                      <SortTh label="Opening" sortKey="opening" sort={rdSort} toggle={rdToggle} align="right" testId="reading-sort-opening" />
+                      <SortTh label="Closing" sortKey="closing" sort={rdSort} toggle={rdToggle} align="right" testId="reading-sort-closing" />
+                      <SortTh label="Consumption" sortKey="consumption" sort={rdSort} toggle={rdToggle} align="right" testId="reading-sort-consumption" />
                       <th>Meter photo / video</th></tr></thead>
                     <tbody>
-                      {readings.map((r, idx) => {
+                      {sortedReadings.map((r, idx) => {
                         const cons = r.closing !== null && r.closing !== "" ? Number(r.closing) - Number(r.opening) : null;
                         return (
                           <tr key={r.meter_id} data-testid={`reading-row-${r.label}`}>

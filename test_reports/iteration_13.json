@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 13 e2e review of SocietyHub: tanker Booking/Delivery dates (validation + delivery-month filing + reserve inflow), flat opening/outstanding dues with payer flowing into 'Bal brought forward', the two label renames, floor->flat ordering everywhere, click-to-sort headings on every report/entry table, and the new month-end owner pack (GET /api/reports/pack pdf|png|zip). Backend: 29 new pytest cases (28 pass, 1 fail) in test_iter13_booking_dues_pack.py + test_iter13_colours.py; regression suites iter9/iter10/iter11/iter12/auth_playbook pass after updating their stale column expectations. Frontend: 4 Playwright runs across Login, Water, Setup, Reconciliation, MIS, Charges, Dashboard/Overview/Annual and rentals Property Reports — all pack downloads (13 files) succeed, all sort headings toggle, dues/payer and Paid-by columns render correctly. Only one real defect found: the reconciliation table in the pack PDF overflows the right page edge.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/reports/pack?report=all|reconciliation&format=pdf|png|zip", "issue": "Reconciliation section table is wider than the printable area: right edge x=844.5pt on a 841.9pt landscape A4 page (12mm margin limit 807.9pt). The last 'Status' column bleeds past the page edge / margin, so it is clipped when printed and looks cut in the WhatsApp PNG. Reduce font/col widths for that 16-column table or set explicit colWidths. Reproduced by tests/test_iter13_booking_dues_pack.py::TestReportPack::test_nothing_clipped"},
+      {"endpoint": "GET /api/reports/pack (combined PDF layout)", "issue": "No page break between the cover page and the first report: 'Water usage charges' starts on the cover page and its Summary/Colour-key block spills onto page 2; the 'Water reconciliation' heading is orphaned on page 3 while its table sits on page 4. Consider PageBreak between sections."},
+      {"endpoint": "GET /api/mis/export?format=xlsx", "issue": "Tanker Purchases sheet title merge uses span=12 while the table now has 13 columns (Booking + Delivery added) — the title no longer spans the whole table. Cosmetic."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ReconTable / WaterUsageReport headings", "issue": "'Flat No.' and 'Floor' headings share sortKey 'floor', so two elements carry the same data-testid (reconcile-sort-floor / mis-sort-floor / meters-sort-floor) and there is no independent sort by flat number. Duplicate testids make strict selectors ambiguous.", "selector": "[data-testid=\"reconcile-sort-floor\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Water — new tanker purchase", "issues": ["Delivery-before-booking is blocked only by the native browser bubble ('Value must be 08/10/2026 or earlier') because the booking input carries max=delivery; the friendly backend message 'Delivery date must be on or after the booking date' is never shown. Works, but an inline app-styled error would be consistent with the rest of the app."]},
+      {"screen": "All pages (initial load)", "issues": ["Two 401 console errors on first paint from the pre-login /api/auth/me probe — noise only, no functional impact."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter13_booking_dues_pack.py",
+    "/app/backend/tests/test_iter13_colours.py",
+    "/app/test_reports/pytest/iter13.xml"
+  ],
+  "action_items": [
+    "Fix the reconciliation table width in reports.py so the Status column stays inside the 12mm right margin (page 4 of the combined pack, and the standalone reconciliation PDF/PNG).",
+    "Optional: add PageBreak between the cover and each report section so every report starts on its own page and headings are not orphaned.",
+    "Optional: give the 'Flat No.' heading its own sortKey (e.g. flat_number) so the two headings do not share one data-testid.",
+    "Optional: widen the xlsx Tanker Purchases title merge from span=12 to 13."
+  ],
+  "critical_code_review_comments": [
+    "engine.compute_statement: carry fallback `carry_in[fid] if fid in carry_in else flat.opening_dues` is correct and verified — after POST /api/periods/reset the next month's carry_in equals the closed month's net (no double counting) and carry_in_payer is blanked.",
+    "server.tanker_doc: month is derived from the delivery date for both POST and PUT and validation raises 400 before any write — verified. guard_open is called for both the old and the new month on PUT, good.",
+    "reports.py build_sections rebuilds a fresh Palette per call, so owner/meter colours are stable and identical between the single-report and combined PDFs (verified by pixel sampling).",
+    "server.py is 1407 lines — the MIS/annual/pack export builders should move into their own module (reports/xlsx already exist) to keep files under ~700 lines."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter13_booking_dues_pack.py (new)",
+    "/app/backend/tests/test_iter13_colours.py (new)",
+    "/app/backend/tests/test_iter10_recon_layout.py (stale expectations updated: 16 columns, 'Advance payment paid by', new 'Paid by' column index)",
+    "/app/backend/tests/test_iter11_xlsx_export.py (stale expectations updated: recon 16 headers, Tanker sheet Booking/Delivery columns and shifted payer columns)"
+  ],
+  "success_rate": {"backend": "97% (28/29 new cases; 1 documented layout defect)", "frontend": "100% of tested flows (pack downloads, sorting, dues, renames)"},
+  "seed_data_creation": "Temporary only, all removed: flat TEST902 (dues 5000 by tenant) on Sunrise Residency via UI, flat TEST901 + tankers TEST_ok/TEST_crossmonth via API, scratch property 'TEST_ZZ Dues Property' for the month-close test. Verified DB has no leftover TEST flats/tankers/properties. Pre-existing scratch rentals rows (TEST_Carry f91e11, QA Prop *) from earlier iterations remain.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@societyhub.com / admin123 (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "Verified this round: POST/PUT /api/tankers reject delivery<booking with 400 and file the purchase under the DELIVERY month (litres/reserve move to that month); flat opening_dues + opening_dues_payer reach statement rows as carry_in/carry_in_payer and satisfy net = base + carry - advance - paid; /api/periods/reset does not double count opening dues; GET /api/flats, statement rows and meters are floor->flat sorted; /api/reports/pack pdf/png/zip (9 files in zip) with 400s for bad format/report; per-owner and per-meter colours unique and stable across single vs combined PDFs (pixel sampled); MIS csv/pdf/xlsx carry 'Advance payment paid by' + 'Paid by' and the xlsx Tanker sheet has Booking/Delivery. NOTE: MIS csv/pdf exports have no tanker table by design (xlsx only). Known harness quirks: running the whole /app/backend/tests folder with the configured -n 2 xdist causes cross-suite interference in the rentals suites (test_iter6 shares a scratch property across classes) — run rentals files with -n 0. test_iter6_rentals_rebuild.py::TestBills::test_draft_prefilled_from_master is stale (expects 42500, gets 85000 because rentals carry-forward from iter7 now adds the prior unpaid month) — left untouched for the developer to confirm intent.",
+  "rca_of_the_issue": "reports.py::build_sections builds the reconciliation table with 16 columns and no explicit colWidths, letting reportlab auto-size to 844.5pt on a 841.9pt landscape A4 page; the Table is hAlign=LEFT inside a 12mm-margin frame, so the overflow is not centred but pushed off the right edge, clipping the Status column in both the PDF and the rasterised WhatsApp PNG. Fix: pass explicit colWidths summing to <= 817.9-24 pt (or drop FONTSIZE to ~6.5 and shorten headers) for the reconciliation section only."
+}

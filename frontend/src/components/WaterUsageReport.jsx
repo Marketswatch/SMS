@@ -1,21 +1,37 @@
 import { Card, Empty } from "@/components/Common";
 import { money, num, monthLabel } from "@/lib/format";
+import { useSort, SortTh } from "@/lib/sort";
 
-// "Water Usage Charges — As per Water Meter Readings": one row per meter, grouped by flat,
-// with the combined charge per owner and the non-metered (reserve) split at the bottom.
+const ACCESSORS = {
+  flat_number: (m) => m.flat_number,
+  owner_name: (m) => m.owner_name,
+  label: (m) => m.label,
+  opening: (m) => m.opening,
+  closing: (m) => m.closing ?? -1,
+  consumption: (m) => m.consumption,
+  charge: (m) => m.charge,
+};
+
+// "Water Usage Charges — As per Water Meter Readings": one row per meter, sorted
+// floor -> flat by default, with the combined charge per flat and the reserve split.
 export const WaterUsageReport = ({ statement, month }) => {
   const meters = statement?.meters || [];
-  const rows = statement?.rows || [];
   const t = statement?.totals;
+  const { sorted, sort, toggle } = useSort(meters, ACCESSORS, "floor");
 
-  const groups = rows
-    .map((r) => ({ row: r, meters: meters.filter((m) => m.flat_id === r.flat_id) }))
-    .filter((g) => g.meters.length);
+  const combined = meters.reduce((acc, m) => {
+    acc[m.flat_id] = (acc[m.flat_id] || 0) + Number(m.charge || 0);
+    return acc;
+  }, {});
+
+  const th = (label, key, align) => (
+    <SortTh label={label} sortKey={key} sort={sort} toggle={toggle} align={align} testId={`meters-sort-${key}`} />
+  );
 
   return (
     <Card title={`Water usage charges — as per meter readings · ${monthLabel(month)}`}
           testId="water-usage-report" className="mb-8">
-      {!groups.length ? (
+      {!meters.length ? (
         <Empty testId="water-usage-empty" title="No meters recorded"
                hint="Register meters per flat and enter readings to build this report." />
       ) : (
@@ -23,35 +39,38 @@ export const WaterUsageReport = ({ statement, month }) => {
           <div className="overflow-x-auto">
             <table className="data-table">
               <thead>
-                <tr><th className="text-right">S.No</th><th>House</th><th>Floor</th><th>Owner</th><th>Meter number</th>
-                  <th className="text-right">Starting unit</th><th className="text-right">Ending unit</th>
-                  <th className="text-right">Consumed units</th><th className="text-right">Water charges</th>
-                  <th className="text-right">Combined</th></tr>
+                <tr>
+                  <th className="text-right">S.No</th>
+                  {th("House", "flat_number")}
+                  {th("Floor", "floor")}
+                  {th("Owner", "owner_name")}
+                  {th("Meter number", "label")}
+                  {th("Starting unit", "opening", "right")}
+                  {th("Ending unit", "closing", "right")}
+                  {th("Consumed units", "consumption", "right")}
+                  {th("Water charges", "charge", "right")}
+                  <th className="text-right">Combined</th>
+                </tr>
               </thead>
               <tbody>
-                {groups.map((g, gi) =>
-                  g.meters.map((m, mi) => (
-                    <tr key={m.meter_id} data-testid={`water-usage-row-${m.label}`}>
-                      {mi === 0 && <td className="num text-slate-500" rowSpan={g.meters.length}>{gi + 1}</td>}
-                      {mi === 0 && <td className="font-semibold" rowSpan={g.meters.length}>{g.row.flat_number}</td>}
-                      {mi === 0 && <td className="text-slate-500" rowSpan={g.meters.length}>{g.row.floor || "—"}</td>}
-                      {mi === 0 && <td rowSpan={g.meters.length}>{g.row.owner_name}</td>}
-                      <td className="mono">{m.label}</td>
-                      <td className="num">{num(m.opening, 2)}</td>
-                      <td className="num">{m.closing === null ? "—" : num(m.closing, 2)}</td>
-                      <td className={`num ${m.flagged ? "text-amber-600" : ""}`}>
-                        {m.flagged ? "0 · flagged" : num(m.consumption, 2)}
-                      </td>
-                      <td className="num">{money(m.charge)}</td>
-                      {mi === 0 && (
-                        <td className="num font-semibold" rowSpan={g.meters.length}
-                            data-testid={`water-usage-combined-${g.row.flat_number}`}>
-                          {money(g.meters.reduce((s, x) => s + Number(x.charge || 0), 0))}
-                        </td>
-                      )}
-                    </tr>
-                  ))
-                )}
+                {sorted.map((m, i) => (
+                  <tr key={m.meter_id} data-testid={`water-usage-row-${m.label}`}>
+                    <td className="num text-slate-500">{i + 1}</td>
+                    <td className="font-semibold">{m.flat_number}</td>
+                    <td className="text-slate-500">{m.floor || "—"}</td>
+                    <td>{m.owner_name}</td>
+                    <td className="mono">{m.label}</td>
+                    <td className="num">{num(m.opening, 2)}</td>
+                    <td className="num">{m.closing === null ? "—" : num(m.closing, 2)}</td>
+                    <td className={`num ${m.flagged ? "text-amber-600" : ""}`}>
+                      {m.flagged ? "0 · flagged" : num(m.consumption, 2)}
+                    </td>
+                    <td className="num">{money(m.charge)}</td>
+                    <td className="num font-semibold" data-testid={`water-usage-combined-${m.flat_number}`}>
+                      {money(combined[m.flat_id])}
+                    </td>
+                  </tr>
+                ))}
               </tbody>
               <tfoot>
                 <tr className="bg-slate-50 font-semibold" data-testid="water-usage-footer">

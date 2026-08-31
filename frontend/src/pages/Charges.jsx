@@ -13,6 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { money, monthLabel, CHARGE_TYPES, dmy } from "@/lib/format";
+import { useSort, SortTh } from "@/lib/sort";
 import { useStatement } from "@/hooks/useStatement";
 
 export default function Charges() {
@@ -95,13 +96,36 @@ export default function Charges() {
   const adhoc = charges.filter((c) => c.category === "adhoc");
   const t = statement?.totals;
 
-  const renderTable = (rows, testId) => (
+  const chargeAccessors = {
+    charge_type: (c) => c.charge_type,
+    description: (c) => c.description || "",
+    person_name: (c) => c.person_name || "",
+    amount: (c) => Number(c.amount || 0),
+    payer: (c) => flatName(c.payer_flat_id),
+    payer_type: (c) => c.payer_type || "",
+    date: (c) => c.date || "",
+  };
+  const sorters = {
+    recurring: useSort(recurring, chargeAccessors, "date"),
+    adhoc: useSort(adhoc, chargeAccessors, "date"),
+  };
+
+  const renderTable = (rows, testId) => {
+    const { sorted, sort, toggle } = sorters[testId];
+    return (
     <div className="overflow-x-auto">
       <table className="data-table">
-        <thead><tr><th className="text-right">S.No</th><th>Type</th><th>Description</th><th>Person</th><th className="text-right">Amount</th>
-          <th>Fronted by</th><th>As</th><th>Date</th><th>Bill / Work media</th><th /></tr></thead>
+        <thead><tr><th className="text-right">S.No</th>
+          <SortTh label="Type" sortKey="charge_type" sort={sort} toggle={toggle} testId={`${testId}-sort-type`} />
+          <SortTh label="Description" sortKey="description" sort={sort} toggle={toggle} testId={`${testId}-sort-desc`} />
+          <SortTh label="Person" sortKey="person_name" sort={sort} toggle={toggle} testId={`${testId}-sort-person`} />
+          <SortTh label="Amount" sortKey="amount" sort={sort} toggle={toggle} align="right" testId={`${testId}-sort-amount`} />
+          <SortTh label="Fronted by" sortKey="payer" sort={sort} toggle={toggle} testId={`${testId}-sort-payer`} />
+          <SortTh label="As" sortKey="payer_type" sort={sort} toggle={toggle} testId={`${testId}-sort-as`} />
+          <SortTh label="Date" sortKey="date" sort={sort} toggle={toggle} testId={`${testId}-sort-date`} />
+          <th>Bill / Work media</th><th /></tr></thead>
         <tbody>
-          {rows.map((c, i) => (
+          {sorted.map((c, i) => (
             <tr key={c.id} data-testid={`${testId}-row-${c.id}`}>
               <td className="num text-slate-500">{i + 1}</td>
               <td className="capitalize font-semibold">{c.charge_type}</td>
@@ -139,7 +163,8 @@ export default function Charges() {
         </tfoot>
       </table>
     </div>
-  );
+    );
+  };
 
   return (
     <div>

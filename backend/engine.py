@@ -11,6 +11,22 @@ def r2(x):
     return round(float(x or 0) + 0.0, 2)
 
 
+FLOOR_ORDER = ["ground", "first", "second", "third", "fourth", "fifth", "sixth",
+               "seventh", "eighth", "ninth", "tenth"]
+
+
+def floor_rank(floor) -> int:
+    f = str(floor or "").strip().lower()
+    return FLOOR_ORDER.index(f) if f in FLOOR_ORDER else (99 if not f else 90)
+
+
+def flat_sort_key(f) -> tuple:
+    """Floor first (ground upward), then flat number naturally."""
+    num = str(f.get("number") or f.get("flat_number") or "")
+    digits = "".join(ch for ch in num if ch.isdigit())
+    return (floor_rank(f.get("floor")), int(digits) if digits else 0, num)
+
+
 def compute_statement(flats, meters, readings, tankers, charges, payments, carry_in):
     """Pure function. All args are plain dicts/lists with string ids.
 
@@ -63,6 +79,10 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
             "opening": opening, "closing": closing, "consumption": cons, "flagged": flagged,
         })
 
+    meter_rows.sort(key=lambda m: (floor_rank(m.get("floor")), flat_sort_key({"number": m.get("flat_number", ""),
+                                                                              "floor": m.get("floor")})[1],
+                                   str(m.get("label") or "")))
+
     for mr in meter_rows:
         mr["charge"] = r2(mr["consumption"] * avg_cost)
 
@@ -114,6 +134,7 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
     received_by_owner = {fid: 0.0 for fid in flat_ids}
     payouts = {fid: 0.0 for fid in flat_ids}
     last_paid_on = {fid: "" for fid in flat_ids}
+    last_paid_by = {fid: "" for fid in flat_ids}
     for p in payments:
         fid = p.get("flat_id")
         if fid not in received:
@@ -126,19 +147,22 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
             d = str(p.get("date") or "")
             if d > last_paid_on[fid]:
                 last_paid_on[fid] = d
+                last_paid_by[fid] = p.get("payer_type", "owner")
             if p.get("payer_type") == "tenant":
                 received_by_tenant[fid] += amt
             else:
                 received_by_owner[fid] += amt
 
     rows = []
-    for f in flats:
+    for f in sorted(flats, key=flat_sort_key):
         fid = f["id"]
         cons = consumption_by_flat.get(fid, 0.0)
         water_own = cons * avg_cost
         water_cost = water_own + reserve_share
         base = water_cost + recurring_share + adhoc_share
-        carry = float(carry_in.get(fid, 0) or 0)
+        # Opening dues apply until the first month is closed; after that the closed
+        # month's net is what carries forward, so they are never counted twice.
+        carry = float(carry_in[fid] or 0) if fid in carry_in else float(f.get("opening_dues", 0) or 0)
         net = base - contributions[fid] + carry - received[fid] + payouts[fid]
         rows.append({
             "flat_id": fid,
@@ -158,6 +182,9 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
             "contributions": r2(contributions[fid]),
             "contribution_detail": contribution_detail[fid],
             "carry_in": r2(carry),
+            "carry_in_payer": f.get("opening_dues_payer", "owner") if fid not in carry_in else "",
+            "opening_dues": r2(float(f.get("opening_dues", 0) or 0)),
+            "opening_dues_payer": f.get("opening_dues_payer", "owner"),
             "received": r2(received[fid]),
             "received_by_tenant": r2(received_by_tenant[fid]),
             "received_by_owner": r2(received_by_owner[fid]),
@@ -165,6 +192,7 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
             "net": r2(net),
             "status": "owes" if r2(net) > 0 else ("owed" if r2(net) < 0 else "settled"),
             "last_paid_on": last_paid_on[fid],
+            "last_paid_by": last_paid_by[fid],
             "payment_status": "paid" if r2(net) <= 0.005 else ("partial" if received[fid] > 0 else "pending"),
         })
 

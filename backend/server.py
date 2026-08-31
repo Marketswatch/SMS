@@ -21,10 +21,11 @@ from pydantic import BaseModel, EmailStr, Field
 from bson import ObjectId
 
 import auth as A
-from engine import compute_statement, RECURRING_TYPES, ADHOC_TYPES
+from engine import compute_statement, RECURRING_TYPES, ADHOC_TYPES, flat_sort_key
 import rentals
 import storage as S
 import xlsx as X
+import reports as R
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("societyhub")
@@ -262,6 +263,8 @@ class FlatIn(BaseModel):
     property_id: str
     number: str
     floor: str = ""
+    opening_dues: float = 0
+    opening_dues_payer: Literal["owner", "tenant"] = "owner"
     owner_name: str
     owner_user_id: Optional[str] = None
     owner_phone: str = ""
@@ -284,8 +287,8 @@ async def list_flats(property_id: str, user: dict = Depends(current_user)):
     q = {"property_id": property_id}
     if user.get("role") in {"owner", "resident"}:
         q["$or"] = [{"owner_user_id": user["id"]}, {"tenant_user_id": user["id"]}]
-    docs = await db.flats.find(q).sort("number", 1).to_list(500)
-    return [ser(d) for d in docs]
+    docs = await db.flats.find(q).to_list(500)
+    return [ser(d) for d in sorted(docs, key=flat_sort_key)]
 
 
 @api.put("/flats/{fid}")
@@ -387,7 +390,8 @@ async def guard_open(property_id: str, month: str):
 class TankerIn(BaseModel):
     property_id: str
     month: str
-    date: str
+    date: str                      # delivery date — drives the reserve inflow and the month
+    booking_date: str = ""         # optional; must be on or before the delivery date
     qty_sump: float = 0
     qty_syntex: float = 0
     amount: float = 0
@@ -401,14 +405,23 @@ class TankerIn(BaseModel):
     media: List[Dict[str, Any]] = []
 
 
-@api.post("/tankers")
-async def create_tanker(body: TankerIn, user: dict = Depends(admin_user)):
-    await guard_open(body.property_id, body.month)
-    await ensure_period(body.property_id, body.month)
+def tanker_doc(body: "TankerIn") -> dict:
+    """Delivery date drives the reserve inflow, so it also decides the month."""
     doc = body.model_dump()
+    if doc.get("booking_date") and doc["booking_date"] > doc["date"]:
+        raise HTTPException(status_code=400, detail="Delivery date must be on or after the booking date")
+    doc["month"] = valid_month(doc["date"][:7])
     doc["total_qty"] = doc["qty_sump"] + doc["qty_syntex"]
     doc["total_cost"] = doc["amount"] + (doc.get("tips_amount") or 0)
     doc["cost_per_litre"] = round(doc["total_cost"] / doc["total_qty"], 4) if doc["total_qty"] else 0
+    return doc
+
+
+@api.post("/tankers")
+async def create_tanker(body: TankerIn, user: dict = Depends(admin_user)):
+    doc = tanker_doc(body)
+    await guard_open(body.property_id, doc["month"])
+    await ensure_period(body.property_id, doc["month"])
     doc["created_at"] = datetime.now(timezone.utc)
     doc["created_by"] = user["id"]
     res = await db.tankers.insert_one(doc)
@@ -427,12 +440,10 @@ async def update_tanker(tid: str, body: TankerIn, user: dict = Depends(admin_use
     existing = await db.tankers.find_one({"_id": oid(tid)})
     if not existing:
         raise HTTPException(status_code=404, detail="Tanker not found")
+    doc = tanker_doc(body)
     await guard_open(existing["property_id"], existing["month"])
-    await guard_open(body.property_id, body.month)
-    doc = body.model_dump()
-    doc["total_qty"] = doc["qty_sump"] + doc["qty_syntex"]
-    doc["total_cost"] = doc["amount"] + (doc.get("tips_amount") or 0)
-    doc["cost_per_litre"] = round(doc["total_cost"] / doc["total_qty"], 4) if doc["total_qty"] else 0
+    await guard_open(body.property_id, doc["month"])
+    await ensure_period(body.property_id, doc["month"])
     doc["updated_at"] = datetime.now(timezone.utc)
     await db.tankers.update_one({"_id": oid(tid)}, {"$set": doc})
     return ser(await db.tankers.find_one({"_id": oid(tid)}))
@@ -893,23 +904,23 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
                   sub=f"{period} · period {stmt['status']} · all amounts in INR")
     head = ["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered cost (reserve)",
             "Total water cost", "Misc", "Total amount", "Bal brought forward",
-            "Advance paid (fronting)", "Amount paid", "Balance to pay / receive",
-            "Date of payment", "Status"]
+            "Advance payment paid by", "Amount paid", "Balance to pay / receive",
+            "Date of payment", "Paid by", "Status"]
     data, fills = [], []
     for i, r in enumerate(stmt["rows"], start=1):
         data.append([i, r["flat_number"], r.get("floor", "") or "—", r["owner_name"],
                      r["water_own_cost"], r["reserve_share"], r["water_cost"],
                      round(r["recurring_share"] + r["maintenance_share"], 2), r["base_cost"],
                      r["carry_in"], r["contributions"], r["received"], r["net"],
-                     dmy(r.get("last_paid_on")), pay_label(r)])
+                     dmy(r.get("last_paid_on")), str(r.get("last_paid_by") or "").title() or "—", pay_label(r)])
         fills.append(owners.fill(r["owner_name"]))
     total = ["", "", "", "TOTAL", round(t["total_water_spend"] - t["reserve_value"], 2), t["reserve_value"],
              t["total_water_spend"], round(t["recurring_total"] + t["maintenance_total"], 2),
              t["billable_total"], t["total_carry_in"], t["total_contributions"], t["total_received"],
-             t["net_position"], "", ""]
+             t["net_position"], "", "", ""]
     row, hdr = X.table(ws, row, head, data, money_cols=range(5, 14), signed_cols=(13,),
                        fills=fills, total_row=total,
-                       widths=[6, 10, 10, 30, 13, 15, 13, 12, 13, 14, 15, 13, 15, 14, 11])
+                       widths=[6, 10, 10, 30, 13, 15, 13, 12, 13, 14, 17, 13, 15, 14, 9, 11])
     X.freeze(ws, f"E{hdr + 1}")
     row = X.legend(ws, row, [
         ("Total expense for the month", float(t["billable_total"])),
@@ -951,9 +962,9 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
 
     # --- 3. Tanker purchases -----------------------------------------------------
     ws3 = X.sheet(wb, "Tanker Purchases")
-    row = X.title(ws3, 1, f"{prop} — Water Purchases", span=12, sub=period)
-    thead = ["S.No", "Date", "Supplier", "Sump (L)", "Syntex (L)", "Total (L)", "Lorry amount",
-             "Tips", "Total cost", "Cost / L", "Lorry paid by", "Tips paid by"]
+    row = X.title(ws3, 1, f"{prop} — Water Purchases", span=13, sub=period)
+    thead = ["S.No", "Booking date", "Delivery date", "Supplier", "Sump (L)", "Syntex (L)", "Total (L)",
+             "Lorry amount", "Tips", "Total cost", "Cost / L", "Lorry paid by", "Tips paid by"]
     tdata, tfills = [], []
     tanker_payers = set()
     for i, tk in enumerate(tankers, start=1):
@@ -962,19 +973,20 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
         cost = float(tk.get("amount", 0) or 0) + tips
         payer = flat_name.get(tk.get("payer_flat_id"), "—")
         tips_payer = flat_name.get(tk.get("tips_payer_flat_id") or tk.get("payer_flat_id"), "—") if tips else "—"
-        tdata.append([i, dmy(tk.get("date")), tk.get("supplier", ""), float(tk.get("qty_sump", 0) or 0),
+        tdata.append([i, dmy(tk.get("booking_date")), dmy(tk.get("date")), tk.get("supplier", ""),
+                      float(tk.get("qty_sump", 0) or 0),
                       float(tk.get("qty_syntex", 0) or 0), litres, float(tk.get("amount", 0) or 0), tips, cost,
                       round(cost / litres, 4) if litres else 0,
                       f"{payer} ({tk.get('payer_type', '')})",
                       f"{tips_payer} ({tk.get('tips_payer_type') or tk.get('payer_type', '')})" if tips else "—"])
         tfills.append(payers.fill(tk.get("payer_flat_id"), f"Flat {payer}"))
         tanker_payers.add(tk.get("payer_flat_id"))
-    ttotal = ["", "", "TOTAL", "", "", float(t["total_litres"]),
+    ttotal = ["", "", "", "TOTAL", "", "", float(t["total_litres"]),
               round(t["total_water_spend"] - t["total_tips"], 2), float(t["total_tips"]),
               float(t["total_water_spend"]), float(t["avg_cost_per_litre"]), "", ""]
-    row, hdr = X.table(ws3, row, thead, tdata, money_cols=(7, 8, 9, 10), fills=tfills, total_row=ttotal,
-                       widths=[6, 12, 22, 11, 11, 11, 13, 10, 12, 10, 22, 22])
-    X.freeze(ws3, f"C{hdr + 1}")
+    row, hdr = X.table(ws3, row, thead, tdata, money_cols=(8, 9, 10, 11), fills=tfills, total_row=ttotal,
+                       widths=[6, 13, 13, 20, 11, 11, 11, 13, 10, 12, 10, 22, 22])
+    X.freeze(ws3, f"D{hdr + 1}")
     row = X.legend(ws3, row, [
         ("Total expense", float(t["total_water_spend"])),
         ("Split between (no. of houses)", t["flat_count"]),
@@ -1027,6 +1039,43 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
     return X.to_bytes(wb)
 
 
+@api.get("/reports/pack")
+async def report_pack(property_id: str, month: str, report: str = Query("all"),
+                      format: str = Query("pdf"), user: dict = Depends(admin_user)):
+    """Month-end owner pack: colour-coded PDF, WhatsApp image, or a zip of every report."""
+    valid_format(format, ("pdf", "png", "zip"))
+    wanted = [r.strip() for r in report.split(",") if r.strip()]
+    if wanted != ["all"] and any(r not in R.REPORTS for r in wanted):
+        raise HTTPException(status_code=400,
+                            detail=f"Unknown report. Use 'all' or any of: {', '.join(R.REPORTS)}")
+    stmt = await build_statement(property_id, month, ensure=False)
+    tankers = [ser(d) for d in await db.tankers.find({"property_id": property_id, "month": month})
+               .sort("date", 1).to_list(500)]
+    flats = [ser(d) for d in await db.flats.find({"property_id": property_id}).to_list(500)]
+    flat_name = {f["id"]: f["number"] for f in flats}
+    label = mon_label(month)
+    slug = f"{stmt['property']['name'].replace(' ', '-').lower()}-{month}"
+
+    if format == "zip":
+        files = []
+        for r in (R.REPORTS if wanted == ["all"] else wanted):
+            pdf = R.build_pdf(stmt, label, tankers, flat_name, dmy, which=(r,), cover=False).read()
+            files.append((f"{r}-{slug}.pdf", pdf))
+            files.append((f"{r}-{slug}.png", R.pdf_to_png(pdf).read()))
+        combined = R.build_pdf(stmt, label, tankers, flat_name, dmy, which=("all",)).read()
+        files.append((f"month-end-pack-{slug}.pdf", combined))
+        return StreamingResponse(R.build_zip(files), media_type="application/zip",
+                                 headers={"Content-Disposition": f'attachment; filename="societyhub-pack-{slug}.zip"'})
+
+    pdf = R.build_pdf(stmt, label, tankers, flat_name, dmy, which=tuple(wanted)).read()
+    name = ("month-end-pack" if wanted == ["all"] else wanted[0]) + f"-{slug}"
+    if format == "png":
+        return StreamingResponse(R.pdf_to_png(pdf), media_type="image/png",
+                                 headers={"Content-Disposition": f'attachment; filename="{name}.png"'})
+    return StreamingResponse(io.BytesIO(pdf), media_type="application/pdf",
+                             headers={"Content-Disposition": f'attachment; filename="{name}.pdf"'})
+
+
 @api.get("/mis/export")
 async def mis_export(property_id: str, month: str, format: str = Query("csv"),
                      user: dict = Depends(admin_user)):
@@ -1073,18 +1122,18 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
         w.writerow(["Water reconciliation — owner statement"])
         w.writerow(["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered cost (reserve)",
                     "Total water cost", "Misc", "Total amount", "Bal brought forward",
-                    "Advance paid (fronting)", "Amount paid", "Balance to pay / receive",
-                    "Date of payment", "Status"])
+                    "Advance payment paid by", "Amount paid", "Balance to pay / receive",
+                    "Date of payment", "Paid by", "Status"])
         for i, r in enumerate(stmt["rows"], start=1):
             w.writerow([i, r["flat_number"], r.get("floor", ""), owner_label(r),
                         r["water_own_cost"], r["reserve_share"], r["water_cost"],
                         round(r["recurring_share"] + r["maintenance_share"], 2), r["base_cost"],
                         r["carry_in"], r["contributions"], r["received"], r["net"],
-                        dmy(r.get("last_paid_on")), pay_label(r)])
+                        dmy(r.get("last_paid_on")), str(r.get("last_paid_by") or "").title(), pay_label(r)])
         w.writerow(["", "", "", "TOTAL", round(t["total_water_spend"] - t["reserve_value"], 2), t["reserve_value"],
                     t["total_water_spend"], round(t["recurring_total"] + t["maintenance_total"], 2),
                     t["billable_total"], t["total_carry_in"], t["total_contributions"], t["total_received"],
-                    t["net_position"], "", ""])
+                    t["net_position"], "", "", ""])
         w.writerow([])
         w.writerow(["Total Expense", t["billable_total"], "Split between", t["flat_count"],
                     "Exp per head", round(t["billable_total"] / (t["flat_count"] or 1), 2)])
@@ -1132,18 +1181,19 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
 
     head = ["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered\ncost (reserve)",
             "Total water\ncost", "Misc", "Total\namount", "Bal brought\nforward",
-            "Advance paid\n(fronting)", "Amount\npaid", "Balance to\npay / receive", "Date of\npayment", "Status"]
+            "Advance payment\npaid by", "Amount\npaid", "Balance to\npay / receive",
+            "Date of\npayment", "Paid\nby", "Status"]
     rows = [head]
     for i, r in enumerate(stmt["rows"], start=1):
         rows.append([i, r["flat_number"], r.get("floor", "") or "—", owner_label(r),
                      r["water_own_cost"], r["reserve_share"], r["water_cost"],
                      round(r["recurring_share"] + r["maintenance_share"], 2), r["base_cost"],
                      r["carry_in"], r["contributions"], r["received"], r["net"],
-                     dmy(r.get("last_paid_on")), pay_label(r)])
+                     dmy(r.get("last_paid_on")), str(r.get("last_paid_by") or "").title() or "—", pay_label(r)])
     rows.append(["", "", "", "TOTAL", round(t["total_water_spend"] - t["reserve_value"], 2), t["reserve_value"],
                  t["total_water_spend"], round(t["recurring_total"] + t["maintenance_total"], 2),
                  t["billable_total"], t["total_carry_in"], t["total_contributions"], t["total_received"],
-                 t["net_position"], "", ""])
+                 t["net_position"], "", "", ""])
     tbl = Table(rows, repeatRows=1)
     style = [("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
              ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),

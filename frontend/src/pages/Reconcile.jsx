@@ -104,7 +104,7 @@ export default function Reconcile() {
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <Stat testId="rec-stat-billable" label="Billable this month" value={money(t?.billable_total)} sub="Water + recurring + repairs" />
-        <Stat testId="rec-stat-contrib" label="Fronted by owners" value={money(t?.total_contributions)} tone="positive" sub="Deducted from their dues" />
+        <Stat testId="rec-stat-contrib" label="Advance payment" value={money(t?.total_contributions)} tone="positive" sub="Deducted from their dues" />
         <Stat testId="rec-stat-received" label="Payments received" value={money(t?.total_received)} sub={`Payouts ${money(t?.total_payouts)}`} />
         <Stat testId="rec-stat-net" label="Net position" value={money(t?.net_position)}
               tone={(t?.net_position || 0) > 0 ? "negative" : "positive"}
