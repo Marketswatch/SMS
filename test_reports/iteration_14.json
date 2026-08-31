@@ -1,0 +1,49 @@
+{
+  "summary": "Iteration 14 review of the six requested water-reconciliation report changes. Backend: new suite /app/backend/tests/test_iter14_water_charges.py (29 cases, 27 pass, 2 real defects). Frontend: 4 Playwright runs (Water readings incl. the headline closing-reading bug, Reconciliation, MIS, rentals, all 10 export/pack downloads) — everything passed with zero console errors. VERIFIED FIXED: (e) closing/opening reading inputs now write by meter_id — typed a distinct value into every closing input in turn, each kept its own value, Consumption updated on the right row, values persisted correctly (GET /api/readings + page reload), and after sorting by Closing (order genuinely reversed) typing into the top visual row still hit that row only; per-row media button on the sorted row works and media saved against the correct meter. (a) merged 'Water Charges' band with colSpan=3 sits exactly over Metered | Non-Metered (in storage) | Total Water cost on the Reconciliation and MIS screens, in the MIS Excel (merged E:G), the MIS CSV and the reconciliation pack PDF. (b) only Prepaid/Paid/Pending/Excess Paid Back appear; engine logic matches net/payout/received for every row and a UI payout of the exact credit flipped flat 101 to 'Excess Paid Back' on screen, in Excel and in the PDF, reverting to Prepaid after the payout was deleted. (c) per-FLAT tints confirmed with openpyxl (Reconciliation, Water Usage (Meters), Ledger sheets) and by rasterising the meters PDF — a second meter added to flat 101 got the SAME tint as Meter 101, all flats distinct, tints consistent across sheets. (f) each single report PDF = 1 page, combined pack = 5 pages (cover + 4), nothing crosses the 12mm right margin (iteration-13 clipping defect is fixed), and no 'Colour key' block remains in any PDF. Regression: pack pdf/png/zip, MIS csv/xlsx/pdf, booking-vs-delivery 400, floor->flat ordering, flat 101 owner 'Ramesh Kumar', rentals workspace all fine.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/mis/export?format=xlsx (sheet 'Water Usage (Meters)')", "issue": "Requirement (d) not applied in Excel: the last column header is still 'Combined (per flat)' instead of 'Total Amount' (server.py build_mis_workbook, mhead). Screen, CSV, MIS PDF and pack PDF are all correct — only the workbook is stale. Repro: tests/test_iter14_water_charges.py::TestGroupBandAndHeaders::test_total_amount_heading"},
+      {"endpoint": "GET /api/mis/export?format=xlsx (sheet 'Tanker Purchases')", "issue": "Requirement (f) not fully applied: cell A18 still writes the block 'Colour key — fronted by' (server.py line ~994, X.colour_key on ws3). All other sheets and all PDFs are clean. Repro: tests/test_iter14_water_charges.py::TestOnePageAndNoColourKey::test_no_colour_key_in_xlsx"},
+      {"endpoint": "GET /api/mis/export?format=pdf", "issue": "The MIS PDF reconciliation table has no merged 'Water Charges' band (screen, Excel, CSV and the pack PDF all do) — inconsistent grouping in that one artefact. It is also 2 pages long, which is fine for MIS but worth noting."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reconciliation / MIS — 'Balance to pay / receive' column", "issues": ["The NetBadge still prints the lowercase word 'settled' for a zero balance (visible on flat 101 after the payout). The user asked for no 'Settled' label; this is the net badge rather than the payment status, so please confirm whether it should read '—' or '₹0.00' instead."]},
+      {"screen": "Reconciliation / MIS recon table", "issues": ["16 columns + notify column overflow the 1920px viewport, so the Status column needs horizontal scrolling (overflow-x-auto container works). Acceptable but the two right-most columns are never visible on first paint."]},
+      {"screen": "Direct navigation to /rentals", "issues": ["Header mode badge still reads MAINTENANCE and the sidebar keeps the maintenance nav while the Rent Roll page renders — pre-existing, cosmetic."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter14_water_charges.py",
+    "/app/backend/tests/qa_iter14_pdfcolour.py",
+    "/app/test_reports/pytest/iter14.xml"
+  ],
+  "action_items": [
+    "server.py build_mis_workbook: rename the Excel meters-sheet header 'Combined (per flat)' -> 'Total Amount'.",
+    "server.py: drop the remaining X.colour_key call on the 'Tanker Purchases' sheet (and the now-dead reports._colour_key helper) so no colour-key block is left in any export.",
+    "Optional: add the merged 'Water Charges' band to the reconciliation table of GET /api/mis/export?format=pdf for consistency.",
+    "Optional: recon xlsx title merge is span=15 while the table has 16 columns (cosmetic).",
+    "Housekeeping: 17 assertions in the older suites (test_iter10_recon_layout, test_iter11_xlsx_export, test_iter12_fixes, test_iter13_booking_dues_pack::test_combined_pdf) now fail only because they still assert the OLD spec — colour-key blocks present, 'Combined (per flat)', 'Non-Metered (in reserve)', per-METER tints, 'Settled' status. They should be updated or deleted; they are not product regressions (each failure was inspected)."
+  ],
+  "critical_code_review_comments": [
+    "Water.jsx: opening/closing onChange use `setReadings(readings.map(...))` with the closure array rather than the functional updater used by the media setter; correctness verified by typing with 40ms delay and by fast fill(), but switching both to setReadings(prev => prev.map(...)) removes any stale-closure risk on rapid input.",
+    "engine.payment_status(net, payout, received): `received` is accepted but never used — either drop the parameter or use it (a flat that was refunded and never paid would still read 'Excess Paid Back').",
+    "reports._table: the `last` variable computed for the group band is unused (`del last`) — dead code; the band span is derived only from consecutive empty strings, so a non-contiguous group spec would silently mis-span.",
+    "server.py is still ~1400 lines; build_mis_workbook and the MIS PDF builder belong in xlsx.py / reports.py (the duplicated recon header list now exists in four places, which is exactly why the Excel 'Total Amount' rename was missed)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter14_water_charges.py (new)",
+    "/app/backend/tests/qa_iter14_pdfcolour.py (new, diagnostic)"
+  ],
+  "success_rate": {"backend": "93% (27/29 new cases; 2 documented spec misses)", "frontend": "100% of tested flows"},
+  "seed_data_creation": "Temporary only, all removed: extra meter 'TEST_M2' on flat 101 (created + deleted by the colour tests and the diagnostic script), one payout payment on flat 101 (created + deleted via API and via the UI). Sunrise Residency August 2026 restored exactly: readings 1000/5500, 1000/6100, 1000/6700, 1000/7300, 4 meters, 3 received payments, flat 101 owner 'Ramesh Kumar', statement nets 101 -10747.99 prepaid, 102 3625.67 pending, 202 2422.99 pending, 201 -100.67 prepaid.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@societyhub.com / admin123 (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "Run the new suite serially: cd /app/backend && python -m pytest tests/test_iter14_water_charges.py -n 0. It covers the reading-by-meter_id fix, the four payment statuses (incl. creating and deleting a payout), the Water Charges band in xlsx/csv/pdf, the 'Total Amount' rename, per-flat tints read with openpyxl + pymupdf pixel sampling, single-page PDFs and colour-key removal. Two tests fail by design until the developer renames the Excel meters header and removes the Tanker-sheet colour key. PDF row tints are sampled at x0-12pt with zoom 3.0 (x0-6 lands on a grid line and gives a false grey). Older iter10/11/12 suites now assert the superseded spec — do not treat their failures as regressions. UI: mode gate at /mode requires clicking mode-maintenance-btn after login; reconcile row cells are index 12 = balance, 15 = status.",
+  "rca_of_the_issue": "Bug (e) root cause confirmed fixed: the readings inputs previously wrote by sorted index into the unsorted array; they now match on x.meter_id === r.meter_id, so typing after any sort updates the row typed into (proved by sorting Closing descending so the visual order reversed, then typing into the top row). The two remaining defects come from duplicated header/legend code: the meters header list and the colour-key call inside server.build_mis_workbook were not updated when reports.py and the frontend were, so only the Excel workbook still shows 'Combined (per flat)' and a 'Colour key — fronted by' block."
+}

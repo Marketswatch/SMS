@@ -18,6 +18,7 @@ from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 import xlsx as X
+from engine import PAYMENT_STATUS_LABELS as STATUS_LABELS
 
 NAVY = colors.HexColor("#1F3864")
 BLUE = colors.HexColor("#2F5597")
@@ -39,26 +40,44 @@ def _hex(tint):
     return colors.HexColor(f"#{tint}")
 
 
-def _table(head, rows, *, widths=None, fills=None, signed_col=None, total=False):
-    data = [head] + rows
-    tbl = Table(data, repeatRows=1, colWidths=widths, hAlign="LEFT")
-    style = [("GRID", (0, 0), (-1, -1), 0.4, GREY),
-             ("BACKGROUND", (0, 0), (-1, 0), NAVY),
-             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-             ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+def _table(head, rows, *, widths=None, fills=None, signed_col=None, total=False, group=None):
+    data = ([group] if group else []) + [head] + rows
+    off = 1 if group else 0
+    tbl = Table(data, repeatRows=1 + off, colWidths=widths, hAlign="LEFT")
+    style = [("GRID", (0, off), (-1, -1), 0.4, GREY),
+             ("BACKGROUND", (0, off), (-1, off), NAVY),
+             ("TEXTCOLOR", (0, off), (-1, off), colors.white),
+             ("FONTNAME", (0, off), (-1, off), "Helvetica-Bold"),
              ("FONTSIZE", (0, 0), (-1, -1), 7.5),
              ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
              ("TOPPADDING", (0, 0), (-1, -1), 4),
              ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-             ("ALIGN", (4, 1), (-1, -1), "RIGHT")]
-    for i, tint in enumerate(fills or [], start=1):
+             ("ALIGN", (4, 1 + off), (-1, -1), "RIGHT")]
+    if group:
+        # the group band: one merged cap over the columns it covers
+        first = next(i for i, v in enumerate(group) if v)
+        last = max(i for i, v in enumerate(group) if v is not None and v != "") if any(group) else first
+        span_end = first
+        for i in range(first + 1, len(group)):
+            if group[i] == "":
+                span_end = i
+            else:
+                break
+        style += [("SPAN", (first, 0), (span_end, 0)),
+                  ("BACKGROUND", (first, 0), (span_end, 0), BLUE),
+                  ("TEXTCOLOR", (first, 0), (span_end, 0), colors.white),
+                  ("FONTNAME", (first, 0), (span_end, 0), "Helvetica-Bold"),
+                  ("ALIGN", (first, 0), (span_end, 0), "CENTER"),
+                  ("GRID", (first, 0), (span_end, 0), 0.4, GREY)]
+        del last
+    for i, tint in enumerate(fills or [], start=1 + off):
         if tint:
             style.append(("BACKGROUND", (0, i), (-1, i), _hex(tint)))
     if total:
         style += [("BACKGROUND", (0, len(data) - 1), (-1, len(data) - 1), TOTAL_BG),
                   ("FONTNAME", (0, len(data) - 1), (-1, len(data) - 1), "Helvetica-Bold")]
     if signed_col is not None:
-        for i, r in enumerate(rows, start=1):
+        for i, r in enumerate(rows, start=1 + off):
             v = r[signed_col]
             if isinstance(v, (int, float)) and v:
                 style.append(("TEXTCOLOR", (signed_col, i), (signed_col, i), RED if v > 0 else GREEN))
@@ -76,19 +95,6 @@ def _legend(pairs):
     return tbl
 
 
-def _colour_key(palette, heading, styles, only=None):
-    keys = [k for k in palette._map if only is None or k in only]
-    if not keys:
-        return []
-    rows = [[palette.labels.get(k, str(k))] for k in keys]
-    tbl = Table(rows, hAlign="LEFT", colWidths=[120 * mm])
-    style = [("GRID", (0, 0), (-1, -1), 0.4, GREY), ("FONTSIZE", (0, 0), (-1, -1), 8)]
-    for i, k in enumerate(keys):
-        style.append(("BACKGROUND", (0, i), (-1, i), _hex(palette._map[k])))
-    tbl.setStyle(TableStyle(style))
-    return [Spacer(1, 8), Paragraph(f"<b>{heading}</b>", styles["Normal"]), Spacer(1, 4), tbl]
-
-
 def _money(v):
     return f"{float(v or 0):,.2f}"
 
@@ -96,8 +102,7 @@ def _money(v):
 def build_sections(which, stmt, month_label, tankers, flat_name, dmy, styles):
     """Return the flowables for one report. Rows are already floor -> flat sorted by the engine."""
     t = stmt["totals"]
-    owners = X.Palette(X.OWNER_TINTS)
-    meters_pal = X.Palette(X.METER_TINTS)
+    flats_pal = X.Palette(X.OWNER_TINTS)   # one colour per flat, shared by its meters
     payers = X.Palette(X.PAYER_TINTS)
     out = [Paragraph(f"<b>{REPORT_TITLES[which]}</b>", styles["Heading2"]),
            Paragraph(f"{stmt['property']['name']} · {month_label} · sorted by floor, then flat number",
@@ -108,7 +113,7 @@ def build_sections(which, stmt, month_label, tankers, flat_name, dmy, styles):
         for m in stmt["meters"]:
             combined[m.get("flat_id")] = round(combined.get(m.get("flat_id"), 0) + float(m.get("charge") or 0), 2)
         head = ["S.No", "House", "Floor", "Owner", "Meter number", "Starting\nunit", "Ending\nunit",
-                "Consumed\nunits", "Water\ncharges", "Combined\n(per flat)"]
+                "Consumed\nunits", "Water\ncharges", "Total\nAmount"]
         rows, fills = [], []
         for i, m in enumerate(stmt["meters"], start=1):
             rows.append([i, m.get("flat_number", ""), m.get("floor", "") or "—", m.get("owner_name", ""),
@@ -116,7 +121,7 @@ def build_sections(which, stmt, month_label, tankers, flat_name, dmy, styles):
                          "—" if m.get("closing") is None else _money(m.get("closing")),
                          _money(m.get("consumption")), _money(m.get("charge")),
                          _money(combined.get(m.get("flat_id")))])
-            fills.append(meters_pal.tint(m.get("meter_id"), m.get("label")))
+            fills.append(flats_pal.tint(m.get("flat_id"), f"Flat {m.get('flat_number')}"))
         rows.append(["", "", "", "", "TOTAL", "", "", _money(t["total_consumed"]), _money(t["metered_charges"]), ""])
         out += [_table(head, rows, fills=fills, total=True), Spacer(1, 10),
                 _legend([("Total lorries this month", t["tanker_count"]),
@@ -129,7 +134,6 @@ def build_sections(which, stmt, month_label, tankers, flat_name, dmy, styles):
                          ("Total non-metered cost", _money(t["reserve_value"])),
                          (f"Non-metered cost split between {t['flat_count']} houses — per house share",
                           _money(t["reserve_share"]))])]
-        out += _colour_key(meters_pal, "Colour key — meter", styles)
 
     elif which == "purchases":
         head = ["S.No", "Booking\ndate", "Delivery\ndate", "Supplier", "Sump (L)", "Syntex (L)", "Total (L)",
@@ -159,7 +163,6 @@ def build_sections(which, stmt, month_label, tankers, flat_name, dmy, styles):
                          ("Split between (no. of houses)", t["flat_count"]),
                          ("Expense per head",
                           _money(t["total_water_spend"] / (t["flat_count"] or 1)))])]
-        out += _colour_key(payers, "Colour key — fronted by", styles, only=used)
 
     elif which == "recurring":
         head = ["S.No", "Type", "Description", "Person", "Amount", "Fronted by", "As", "Date"]
@@ -179,39 +182,39 @@ def build_sections(which, stmt, month_label, tankers, flat_name, dmy, styles):
                 _legend([("Total recurring expense", _money(t["recurring_total"])),
                          ("Split between (no. of houses)", t["flat_count"]),
                          ("Expense per head (recurring)", _money(t["recurring_share"]))])]
-        out += _colour_key(payers, "Colour key — fronted by", styles, only=used)
 
     else:  # reconciliation
-        head = ["S.No", "Flat\nNo.", "Floor", "Owner", "Metered\ncost", "Non-metered\ncost (reserve)",
-                "Total water\ncost", "Misc", "Total\namount", "Bal brought\nforward",
+        head = ["S.No", "Flat\nNo.", "Floor", "Owner", "Metered", "Non-Metered\n(in storage)",
+                "Total Water\ncost", "Misc", "Total\namount", "Bal brought\nforward",
                 "Advance payment\npaid by", "Amount\npaid", "Balance to\npay / receive",
                 "Date of\npayment", "Paid\nby", "Status"]
         widths = [9 * mm, 11 * mm, 12 * mm, 32 * mm, 16 * mm, 19 * mm, 17 * mm, 13 * mm, 17 * mm,
-                  18 * mm, 22 * mm, 16 * mm, 19 * mm, 17 * mm, 11 * mm, 14 * mm]
+                  18 * mm, 22 * mm, 16 * mm, 19 * mm, 17 * mm, 11 * mm, 21 * mm]
         rows, fills = [], []
         for i, r in enumerate(stmt["rows"], start=1):
-            status = ("Paid" if r.get("last_paid_on") else "Settled") if r.get("payment_status") == "paid" \
-                else ("Partial" if r.get("payment_status") == "partial" else "Pending")
             rows.append([i, r["flat_number"], r.get("floor", "") or "—", r["owner_name"],
                          _money(r["water_own_cost"]), _money(r["reserve_share"]), _money(r["water_cost"]),
                          _money(r["recurring_share"] + r["maintenance_share"]), _money(r["base_cost"]),
                          _money(r["carry_in"]), _money(r["contributions"]), _money(r["received"]),
                          _money(r["net"]), dmy(r.get("last_paid_on")),
-                         str(r.get("last_paid_by") or "").title() or "—", status])
-            fills.append(owners.tint(r["owner_name"]))
+                         str(r.get("last_paid_by") or "").title() or "—",
+                         STATUS_LABELS.get(r.get("payment_status"), "Pending")])
+            fills.append(flats_pal.tint(r["flat_id"], f"Flat {r['flat_number']}"))
         rows.append(["", "", "", "TOTAL", _money(t["total_water_spend"] - t["reserve_value"]),
                      _money(t["reserve_value"]), _money(t["total_water_spend"]),
                      _money(t["recurring_total"] + t["maintenance_total"]), _money(t["billable_total"]),
                      _money(t["total_carry_in"]), _money(t["total_contributions"]),
                      _money(t["total_received"]), _money(t["net_position"]), "", "", ""])
-        out += [_table(head, rows, widths=widths, fills=fills, total=True), Spacer(1, 10),
+        out += [_table(head, rows, widths=widths, fills=fills, total=True,
+                       group=[None, None, None, None, "Water Charges", "", "",
+                              None, None, None, None, None, None, None, None, None]),
+                Spacer(1, 10),
                 _legend([("Total expense for the month", _money(t["billable_total"])),
                          ("Split between (no. of houses)", t["flat_count"]),
                          ("Expense per head", _money(t["billable_total"] / (t["flat_count"] or 1))),
                          ("Total receivable (owes)", _money(t["total_owes"])),
                          ("Total payable (owed to owners)", _money(t["total_owed"])),
                          ("Net position", _money(t["net_position"]))])]
-        out += _colour_key(owners, "Colour key — owner", styles)
 
     return out
 

@@ -49,7 +49,7 @@ export const WaterUsageReport = ({ statement, month }) => {
                   {th("Ending unit", "closing", "right")}
                   {th("Consumed units", "consumption", "right")}
                   {th("Water charges", "charge", "right")}
-                  <th className="text-right">Combined</th>
+                  <th className="text-right">Total Amount</th>
                 </tr>
               </thead>
               <tbody>
@@ -66,8 +66,7 @@ export const WaterUsageReport = ({ statement, month }) => {
                       {m.flagged ? "0 · flagged" : num(m.consumption, 2)}
                     </td>
                     <td className="num">{money(m.charge)}</td>
-                    <td className="num font-semibold" data-testid={`water-usage-combined-${m.flat_number}`}>
-                      {money(combined[m.flat_id])}
+                    <td className="num font-semibold" data-testid={`water-usage-combined-${m.flat_number}`}>                      {money(combined[m.flat_id])}
                     </td>
                   </tr>
                 ))}

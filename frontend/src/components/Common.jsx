@@ -32,7 +32,7 @@ export const NetBadge = ({ value, testId }) => {
   if (v === 0)
     return (
       <span data-testid={testId} className="inline-flex items-center gap-1 mono text-xs px-2 py-0.5 rounded border bg-slate-50 text-slate-600 border-slate-200">
-        <Minus className="w-3 h-3" /> settled
+        <Minus className="w-3 h-3" /> —
       </span>
     );
   const owes = v > 0;

@@ -101,6 +101,24 @@ def section(ws, row, text, span=6):
     return row + 1
 
 
+def group_band(ws, row, spans, ncols):
+    """A merged band above the header row, e.g. one 'Water Charges' cap over three columns."""
+    for j in range(1, ncols + 1):
+        ws.cell(row=row, column=j, value=None)
+    for start, end, label in spans:
+        c = ws.cell(row=row, column=start, value=label)
+        c.font = Font(bold=True, color="FFFFFF", size=10)
+        c.fill = PatternFill("solid", fgColor=BLUE)
+        c.alignment = Alignment(horizontal="center", vertical="center")
+        c.border = BORDER
+        for j in range(start + 1, end + 1):
+            ws.cell(row=row, column=j).fill = PatternFill("solid", fgColor=BLUE)
+            ws.cell(row=row, column=j).border = BORDER
+        ws.merge_cells(start_row=row, start_column=start, end_row=row, end_column=end)
+    ws.row_dimensions[row].height = 18
+    return row + 1
+
+
 def table(ws, row, headers, rows, *, money_cols=(), int_cols=(), fills=None,
           signed_cols=(), total_row=None, widths=None):
     """Write a header band + data rows. `fills` is a list (one PatternFill or None per row)."""

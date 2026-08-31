@@ -22,6 +22,7 @@ from bson import ObjectId
 
 import auth as A
 from engine import compute_statement, RECURRING_TYPES, ADHOC_TYPES, flat_sort_key
+from engine import PAYMENT_STATUS_LABELS as E_LABELS
 import rentals
 import storage as S
 import xlsx as X
@@ -894,16 +895,15 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
     prop = stmt["property"]["name"]
     period = mon_label(month)
     wb = X.new_book()
-    owners = X.Palette(X.OWNER_TINTS)
+    flats_pal = X.Palette(X.OWNER_TINTS)   # one colour per flat, shared by all its meters
     payers = X.Palette(X.PAYER_TINTS)
-    meters_pal = X.Palette(X.METER_TINTS)
 
     # --- 1. Water reconciliation -------------------------------------------------
     ws = X.sheet(wb, "Water Reconciliation")
-    row = X.title(ws, 1, f"{prop} — Water Reconciliation", span=15,
+    row = X.title(ws, 1, f"{prop} — Water Reconciliation", span=16,
                   sub=f"{period} · period {stmt['status']} · all amounts in INR")
-    head = ["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered cost (reserve)",
-            "Total water cost", "Misc", "Total amount", "Bal brought forward",
+    head = ["S.No", "Flat No.", "Floor", "Owner", "Metered", "Non-Metered (in storage)",
+            "Total Water cost", "Misc", "Total amount", "Bal brought forward",
             "Advance payment paid by", "Amount paid", "Balance to pay / receive",
             "Date of payment", "Paid by", "Status"]
     data, fills = [], []
@@ -913,36 +913,36 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
                      round(r["recurring_share"] + r["maintenance_share"], 2), r["base_cost"],
                      r["carry_in"], r["contributions"], r["received"], r["net"],
                      dmy(r.get("last_paid_on")), str(r.get("last_paid_by") or "").title() or "—", pay_label(r)])
-        fills.append(owners.fill(r["owner_name"]))
+        fills.append(flats_pal.fill(r["flat_id"], f"Flat {r['flat_number']}"))
     total = ["", "", "", "TOTAL", round(t["total_water_spend"] - t["reserve_value"], 2), t["reserve_value"],
              t["total_water_spend"], round(t["recurring_total"] + t["maintenance_total"], 2),
              t["billable_total"], t["total_carry_in"], t["total_contributions"], t["total_received"],
              t["net_position"], "", "", ""]
+    row = X.group_band(ws, row, [(5, 7, "Water Charges")], len(head))
     row, hdr = X.table(ws, row, head, data, money_cols=range(5, 14), signed_cols=(13,),
                        fills=fills, total_row=total,
                        widths=[6, 10, 10, 30, 13, 15, 13, 12, 13, 14, 17, 13, 15, 14, 9, 11])
     X.freeze(ws, f"E{hdr + 1}")
     row = X.legend(ws, row, [
         ("Total expense for the month", float(t["billable_total"])),
-        (f"Split between (no. of houses)", t["flat_count"]),
+        ("Split between (no. of houses)", t["flat_count"]),
         ("Expense per head", round(t["billable_total"] / (t["flat_count"] or 1), 2)),
         ("Total receivable (owes)", float(t["total_owes"])),
         ("Total payable (owed to owners)", float(t["total_owed"])),
         ("Net position", float(t["net_position"])),
     ], label="Summary")
-    row = X.colour_key(ws, row, owners, "Colour key — owner")
 
     # --- 2. Water usage as per meters -------------------------------------------
     ws2 = X.sheet(wb, "Water Usage (Meters)")
     row = X.title(ws2, 1, f"{prop} — Water Usage Charges (as per meter readings)", span=10, sub=period)
     mhead = ["S.No", "House", "Floor", "Owner", "Meter number", "Starting unit", "Ending unit",
-             "Consumed units", "Water charges", "Combined (per flat)"]
+             "Consumed units", "Water charges", "Total Amount"]
     mdata, mfills = [], []
     for i, m in enumerate(stmt["meters"], start=1):
         mdata.append([i, m.get("flat_number", ""), m.get("floor", "") or "—", m.get("owner_name", ""),
                       m.get("label", ""), m.get("opening"), m.get("closing"), m.get("consumption"),
                       m.get("charge"), combined.get(m.get("flat_id"), "")])
-        mfills.append(meters_pal.fill(m.get("meter_id"), m.get("label")))
+        mfills.append(flats_pal.fill(m.get("flat_id"), f"Flat {m.get('flat_number')}"))
     mtotal = ["", "", "", "", "TOTAL", "", "", t["total_consumed"], t["metered_charges"], ""]
     row, hdr = X.table(ws2, row, mhead, mdata, money_cols=(9, 10), fills=mfills, total_row=mtotal,
                        widths=[6, 10, 10, 28, 18, 14, 14, 15, 14, 18])
@@ -958,7 +958,6 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
         ("Total non-metered cost", float(t["reserve_value"])),
         (f"Non-metered cost split between {t['flat_count']} houses — per house share", float(t["reserve_share"])),
     ], label="Water legend")
-    row = X.colour_key(ws2, row, meters_pal, "Colour key — meter")
 
     # --- 3. Tanker purchases -----------------------------------------------------
     ws3 = X.sheet(wb, "Tanker Purchases")
@@ -992,7 +991,6 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
         ("Split between (no. of houses)", t["flat_count"]),
         ("Expense per head", round(t["total_water_spend"] / (t["flat_count"] or 1), 2)),
     ], label="Summary")
-    row = X.colour_key(ws3, row, payers, "Colour key — fronted by", only=tanker_payers)
 
     # --- 4. Charges --------------------------------------------------------------
     ws4 = X.sheet(wb, "Charges")
@@ -1016,7 +1014,6 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
                             widths=[6, 18, 16, 30, 18, 12, 14, 10, 12])
         if bucket == "Recurring":
             X.freeze(ws4, f"D{chdr + 1}")
-    row = X.colour_key(ws4, row, payers, "Colour key — fronted by", only=charge_payers)
 
     # --- 5. Ledger ---------------------------------------------------------------
     ws5 = X.sheet(wb, "Ledger")
@@ -1029,12 +1026,11 @@ def build_mis_workbook(stmt, month, tankers, charges, payments, flat_name,
                       owner_of.get(p.get("flat_id"), ""),
                       "Received" if p.get("direction") != "payout" else "Payout",
                       str(p.get("payer_type", "")).title(), float(p.get("amount", 0) or 0), p.get("notes", "")])
-        lfills.append(owners.fill(owner_of.get(p.get("flat_id"))))
+        lfills.append(flats_pal.fill(p.get("flat_id"), f"Flat {flat_name.get(p.get('flat_id'), '—')}"))
     ltotal = ["", "", "", "TOTAL", "", "", float(t["total_received"]), f"Payouts {t['total_payouts']}"]
     row, hdr = X.table(ws5, row, lhead, ldata, money_cols=(7,), fills=lfills, total_row=ltotal,
                        widths=[6, 12, 10, 26, 12, 12, 13, 34])
     X.freeze(ws5, f"C{hdr + 1}")
-    row = X.colour_key(ws5, row, owners, "Colour key — owner")
 
     return X.to_bytes(wb)
 
@@ -1087,9 +1083,7 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
         return f"{r['owner_name']} ({r['tenant_name']} — tenant)" if r.get("tenant_name") else r["owner_name"]
 
     def pay_label(r):
-        if r.get("payment_status") == "paid":
-            return "Paid" if r.get("last_paid_on") else "Settled"
-        return "Partial" if r.get("payment_status") == "partial" else "Pending"
+        return E_LABELS.get(r.get("payment_status"), "Pending")
 
     combined = {}
     for m in stmt["meters"]:
@@ -1120,8 +1114,9 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
         w.writerow(["Recurring total", t["recurring_total"], "Maintenance total", t["maintenance_total"]])
         w.writerow([])
         w.writerow(["Water reconciliation — owner statement"])
-        w.writerow(["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered cost (reserve)",
-                    "Total water cost", "Misc", "Total amount", "Bal brought forward",
+        w.writerow(["", "", "", "", "Water Charges", "Water Charges", "Water Charges", "", "", "", "", "", "", "", "", ""])
+        w.writerow(["S.No", "Flat No.", "Floor", "Owner", "Metered", "Non-Metered (in storage)",
+                    "Total Water cost", "Misc", "Total amount", "Bal brought forward",
                     "Advance payment paid by", "Amount paid", "Balance to pay / receive",
                     "Date of payment", "Paid by", "Status"])
         for i, r in enumerate(stmt["rows"], start=1):
@@ -1140,7 +1135,7 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
         w.writerow([])
         w.writerow(["Water usage charges — as per meter readings"])
         w.writerow(["S.No", "House", "Floor", "Owner", "Meter number", "Starting unit", "Ending unit",
-                    "Consumed units", "Water charges", "Combined (per flat)"])
+                    "Consumed units", "Water charges", "Total Amount"])
         for i, m in enumerate(stmt["meters"], start=1):
             w.writerow([i, m.get("flat_number", ""), m.get("floor", ""), m.get("owner_name", ""), m.get("label", ""),
                         m.get("opening"), m.get("closing"), m.get("consumption"), m.get("charge"),
@@ -1179,11 +1174,12 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
                             ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke)]))
     story += [st, Spacer(1, 14), Paragraph("Water reconciliation — owner statement", styles["Heading3"])]
 
-    head = ["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered\ncost (reserve)",
-            "Total water\ncost", "Misc", "Total\namount", "Bal brought\nforward",
+    head = ["S.No", "Flat No.", "Floor", "Owner", "Metered", "Non-Metered\n(in storage)",
+            "Total Water\ncost", "Misc", "Total\namount", "Bal brought\nforward",
             "Advance payment\npaid by", "Amount\npaid", "Balance to\npay / receive",
             "Date of\npayment", "Paid\nby", "Status"]
-    rows = [head]
+    rows = [[None, None, None, None, "Water Charges", "", "", None, None, None, None, None, None, None, None, None],
+            head]
     for i, r in enumerate(stmt["rows"], start=1):
         rows.append([i, r["flat_number"], r.get("floor", "") or "—", owner_label(r),
                      r["water_own_cost"], r["reserve_share"], r["water_cost"],
@@ -1194,15 +1190,20 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
                  t["total_water_spend"], round(t["recurring_total"] + t["maintenance_total"], 2),
                  t["billable_total"], t["total_carry_in"], t["total_contributions"], t["total_received"],
                  t["net_position"], "", "", ""])
-    tbl = Table(rows, repeatRows=1)
-    style = [("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
-             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
-             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+    tbl = Table(rows, repeatRows=2)
+    style = [("GRID", (0, 1), (-1, -1), 0.4, colors.grey),
+             ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#0F172A")),
+             ("TEXTCOLOR", (0, 1), (-1, 1), colors.white),
              ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2E8F0")),
+             ("SPAN", (4, 0), (6, 0)),
+             ("BACKGROUND", (4, 0), (6, 0), colors.HexColor("#2F5597")),
+             ("TEXTCOLOR", (4, 0), (6, 0), colors.white),
+             ("ALIGN", (4, 0), (6, 0), "CENTER"),
+             ("GRID", (4, 0), (6, 0), 0.4, colors.grey),
              ("FONTSIZE", (0, 0), (-1, -1), 7),
              ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-             ("ALIGN", (4, 1), (-3, -1), "RIGHT")]
-    for i, r in enumerate(stmt["rows"], start=1):
+             ("ALIGN", (4, 2), (-3, -1), "RIGHT")]
+    for i, r in enumerate(stmt["rows"], start=2):
         if r["net"] > 0:
             style.append(("TEXTCOLOR", (-3, i), (-1, i), colors.HexColor("#DC2626")))
         elif r["net"] < 0:
@@ -1215,7 +1216,7 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
               Spacer(1, 16), Paragraph("Water usage charges — as per meter readings", styles["Heading3"])]
 
     whead = ["S.No", "House", "Floor", "Owner", "Meter number", "Starting unit", "Ending unit",
-             "Consumed units", "Water charges", "Combined\n(per flat)"]
+             "Consumed units", "Water charges", "Total\nAmount"]
     wrows = [whead] + [[i, m.get("flat_number", ""), m.get("floor", "") or "—", m.get("owner_name", ""),
                         m.get("label", ""), m.get("opening"), m.get("closing"), m.get("consumption"),
                         m.get("charge"), combined.get(m.get("flat_id"), "")]

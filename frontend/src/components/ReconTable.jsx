@@ -2,15 +2,25 @@ import { NetBadge } from "@/components/Common";
 import { money, dmy } from "@/lib/format";
 import { useSort, SortTh } from "@/lib/sort";
 
-const chip = (r) => {
-  const settledWithoutPayment = r.payment_status === "paid" && !r.last_paid_on;
-  const label = settledWithoutPayment ? "Settled" : r.payment_status === "paid" ? "Paid"
-    : r.payment_status === "partial" ? "Partial" : "Pending";
-  const tone = r.payment_status === "paid" ? "bg-emerald-50 text-emerald-700 border-emerald-200"
-    : r.payment_status === "partial" ? "bg-amber-50 text-amber-800 border-amber-200"
-    : "bg-red-50 text-red-700 border-red-200";
-  return <span className={`text-xs px-2 py-0.5 rounded border ${tone}`}>{label}</span>;
+const STATUS_TONES = {
+  prepaid: "bg-sky-50 text-sky-700 border-sky-200",
+  paid: "bg-emerald-50 text-emerald-700 border-emerald-200",
+  pending: "bg-red-50 text-red-700 border-red-200",
+  excess_paid_back: "bg-violet-50 text-violet-700 border-violet-200",
 };
+
+const STATUS_LABELS = {
+  prepaid: "Prepaid",
+  paid: "Paid",
+  pending: "Pending",
+  excess_paid_back: "Excess Paid Back",
+};
+
+const chip = (r) => (
+  <span className={`text-xs px-2 py-0.5 rounded border whitespace-nowrap ${STATUS_TONES[r.payment_status] || STATUS_TONES.pending}`}>
+    {STATUS_LABELS[r.payment_status] || "Pending"}
+  </span>
+);
 
 const misc = (r) => Number(r.recurring_share || 0) + Number(r.maintenance_share || 0);
 
@@ -46,13 +56,19 @@ export const ReconTable = ({ rows, totals, testPrefix, extraHead, extraCell }) =
       <table className="data-table text-[13px]">
         <thead>
           <tr>
+            <th colSpan={4} />
+            <th colSpan={3} className="text-center bg-slate-100 border-b border-slate-200"
+                data-testid={`${testPrefix}-group-water`}>Water Charges</th>
+            <th colSpan={extraHead ? 10 : 9} />
+          </tr>
+          <tr>
             <th className="text-right">S.No</th>
             {th("Flat No.", "flat_number")}
             {th("Floor", "floor")}
             {th("Owner", "owner_name")}
-            {th("Metered cost", "water_own_cost", "right")}
-            {th("Non-metered cost (reserve)", "reserve_share", "right")}
-            {th("Total water cost", "water_cost", "right")}
+            {th("Metered", "water_own_cost", "right")}
+            {th("Non-Metered (in storage)", "reserve_share", "right")}
+            {th("Total Water cost", "water_cost", "right")}
             {th("Misc", "misc", "right")}
             {th("Total amount", "base_cost", "right")}
             {th("Bal brought forward", "carry_in", "right")}

@@ -27,6 +27,23 @@ def flat_sort_key(f) -> tuple:
     return (floor_rank(f.get("floor")), int(digits) if digits else 0, num)
 
 
+PAYMENT_STATUS_LABELS = {
+    "prepaid": "Prepaid",
+    "paid": "Paid",
+    "pending": "Pending",
+    "excess_paid_back": "Excess Paid Back",
+}
+
+
+def payment_status(net: float, payout: float, received: float) -> str:
+    """prepaid = in credit · excess_paid_back = credit already returned · paid · pending."""
+    if net < -0.005:
+        return "prepaid"
+    if net <= 0.005:
+        return "excess_paid_back" if payout > 0.005 else "paid"
+    return "pending"
+
+
 def compute_statement(flats, meters, readings, tankers, charges, payments, carry_in):
     """Pure function. All args are plain dicts/lists with string ids.
 
@@ -193,7 +210,7 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
             "status": "owes" if r2(net) > 0 else ("owed" if r2(net) < 0 else "settled"),
             "last_paid_on": last_paid_on[fid],
             "last_paid_by": last_paid_by[fid],
-            "payment_status": "paid" if r2(net) <= 0.005 else ("partial" if received[fid] > 0 else "pending"),
+            "payment_status": payment_status(r2(net), payouts[fid], received[fid]),
         })
 
     totals = {

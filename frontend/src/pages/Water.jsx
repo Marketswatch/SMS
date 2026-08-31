@@ -358,13 +358,13 @@ export default function Water() {
                               <Input type="number" inputMode="decimal" step="any" disabled={locked}
                                      data-testid={`reading-opening-${r.label}`}
                                      className="h-10 w-28 mono text-right ml-auto" value={r.opening ?? ""}
-                                     onChange={(e) => setReadings(readings.map((x, i) => i === idx ? { ...x, opening: e.target.value } : x))} />
+                                     onChange={(e) => setReadings(readings.map((x) => x.meter_id === r.meter_id ? { ...x, opening: e.target.value } : x))} />
                             </td>
                             <td className="text-right">
                               <Input type="number" inputMode="decimal" step="any" disabled={locked}
                                      data-testid={`reading-closing-${r.label}`}
                                      className="h-10 w-28 mono text-right ml-auto" value={r.closing ?? ""}
-                                     onChange={(e) => setReadings(readings.map((x, i) => i === idx ? { ...x, closing: e.target.value } : x))} />
+                                     onChange={(e) => setReadings(readings.map((x) => x.meter_id === r.meter_id ? { ...x, closing: e.target.value } : x))} />
                             </td>
                             <td className={`num font-semibold ${cons !== null && cons < 0 ? "text-amber-600" : ""}`}>
                               {cons === null ? "—" : cons < 0 ? "0 · flagged" : num(cons)}
@@ -372,8 +372,8 @@ export default function Water() {
                             <td>
                               {locked ? <MediaThumbs media={r.media} /> : (
                                 <MediaMini media={r.media || []} testId={`reading-media-${r.label}`}
-                                           setMedia={(fn) => setReadings((prev) => prev.map((x, i) =>
-                                             i === idx ? { ...x, media: typeof fn === "function" ? fn(x.media || []) : fn } : x))} />
+                                           setMedia={(fn) => setReadings((prev) => prev.map((x) =>
+                                             x.meter_id === r.meter_id ? { ...x, media: typeof fn === "function" ? fn(x.media || []) : fn } : x))} />
                               )}
                             </td>
                           </tr>
