@@ -6,7 +6,7 @@ import { useApp } from "@/context/AppContext";
 import { useRentStatement } from "@/hooks/useRentStatement";
 import { PageHeader, Card, Stat, Empty } from "@/components/Common";
 import { Button } from "@/components/ui/button";
-import { money, monthLabel } from "@/lib/format";
+import { money, monthLabel, dmy } from "@/lib/format";
 
 export default function RentReport() {
   const { rentMonth } = useApp();
@@ -33,13 +33,14 @@ export default function RentReport() {
   const table = (rows, testId) => (
     <div className="overflow-x-auto">
       <table className="data-table">
-        <thead><tr><th>Property</th><th>Tenant</th><th className="text-right">Rent</th><th className="text-right">Maint.</th>
+        <thead><tr><th className="text-right">S.No</th><th>Property</th><th>Tenant</th><th className="text-right">Rent</th><th className="text-right">Maint.</th>
           <th className="text-right">Ad-hoc</th><th className="text-right">To collect</th>
           <th className="text-right">Received</th><th className="text-right">Balance</th>
           <th className="text-right">Deposit held</th></tr></thead>
         <tbody>
-          {rows.map((r) => (
+          {rows.map((r, i) => (
             <tr key={r.unit_id} data-testid={`${testId}-row-${r.name}`}>
+              <td className="num text-slate-500">{i + 1}</td>
               <td className="font-semibold">{r.name}</td>
               <td className="text-slate-500">{r.tenant_name || "—"}</td>
               <td className="num">{money(r.billed_rent)}</td>
@@ -90,11 +91,12 @@ export default function RentReport() {
           <Card title="Building / association settlement" testId="report-settlement-card" className="mb-6">
             <div className="overflow-x-auto">
               <table className="data-table">
-                <thead><tr><th>Building</th><th className="text-right">Payable</th><th className="text-right">Paid</th>
+                <thead><tr><th className="text-right">S.No</th><th>Building</th><th className="text-right">Payable</th><th className="text-right">Paid</th>
                   <th className="text-right">Credits</th><th className="text-right">Balance</th></tr></thead>
                 <tbody>
-                  {stmt.buildings.map((b) => (
+                  {stmt.buildings.map((b, i) => (
                     <tr key={b.key} data-testid={`report-settlement-row-${b.building}`}>
+                      <td className="num text-slate-500">{i + 1}</td>
                       <td className="font-semibold">{b.building}</td>
                       <td className="num">{money(b.payable)}</td>
                       <td className="num text-emerald-700">{money(b.paid)}</td>
@@ -103,7 +105,7 @@ export default function RentReport() {
                     </tr>
                   ))}
                   <tr>
-                    <td className="font-semibold text-right">Total</td>
+                    <td colSpan={2} className="font-semibold text-right">Total</td>
                     <td className="num font-semibold">{money(t.building_payable)}</td>
                     <td className="num font-semibold">{money(t.building_paid)}</td>
                     <td className="num font-semibold">{money(t.building_credits)}</td>
@@ -118,20 +120,21 @@ export default function RentReport() {
             <Card title="Vacancy" testId="report-vacancy-card">
               <div className="overflow-x-auto">
                 <table className="data-table">
-                  <thead><tr><th>Property</th><th>Vacant since</th><th className="text-right">Idle days</th>
+                  <thead><tr><th className="text-right">S.No</th><th>Property</th><th>Vacant since</th><th className="text-right">Idle days</th>
                     <th className="text-right">Monthly rent</th><th className="text-right">Rent forgone</th></tr></thead>
                   <tbody>
-                    {vacant.map((r) => (
+                    {vacant.map((r, i) => (
                       <tr key={r.unit_id} data-testid={`report-vacancy-row-${r.name}`}>
+                        <td className="num text-slate-500">{i + 1}</td>
                         <td className="font-semibold">{r.name}</td>
-                        <td className="text-slate-500">{r.vacant_since || "—"}</td>
+                        <td className="text-slate-500">{dmy(r.vacant_since)}</td>
                         <td className="num">{r.vacant_days}</td>
                         <td className="num">{money(r.rent_amount)}</td>
                         <td className="num font-semibold text-amber-700">{money(r.lost_rent)}</td>
                       </tr>
                     ))}
                     <tr>
-                      <td colSpan={2} className="font-semibold text-right">Total</td>
+                      <td colSpan={3} className="font-semibold text-right">Total</td>
                       <td className="num font-semibold">{t.vacant_days}</td>
                       <td className="num font-semibold">{money(vacant.reduce((s, r) => s + r.rent_amount, 0))}</td>
                       <td className="num font-semibold">{money(t.lost_rent)}</td>

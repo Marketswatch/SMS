@@ -1,0 +1,47 @@
+{
+  "summary": "Iteration 10 verification of the new 15-column water reconciliation layout (screen + CSV + PDF), 'Settled' wording and the Combined column in exports. Backend: new suite /app/backend/tests/test_iter10_recon_layout.py — 15/15 passed against the public preview URL (row arithmetic water_cost=metered+reserve, base_cost=water+misc, net=base+carry_in−contributions−received; metered cost = consumption × avg_cost_per_litre; column sums == totals; MIS CSV section title, EXACT 15 headers in the required order, 15-cell data rows with sequential serials, TOTAL row values matching totals, Status wording Paid/Settled/Partial/Pending vs payment_status+last_paid_on, DD-MM-YYYY payment dates, 'Total Expense/Split between/Exp per head' line, water-usage header ending in 'Combined (per flat)', zero ISO dates; PDF is a valid 2-page PDF with both sections, all 15 headers, legend block and no ISO dates). PDF rendered to PNG at 110dpi — nothing clipped or overflowing, TOTAL row shaded, red/green net colouring correct. Also fixed 3 stale assertions in test_iter9_report_formats.py that still expected the old 'House / Flat'/'Payment' headers → full iter9+iter10 run is 35/35 green. Frontend (Playwright, public URL, admin login → Maintenance): Reconcile card titled 'Water reconciliation — owner statement' with EXACTLY the 15 columns in order + 'Notify owner' (16 header cells == 16 body cells); reconcile-row/net/paydate/paystatus testids present for 101/102/201/202; values identical to GET /api/statement (101 metered 927.44 / reserve 999.57 / water 1927.01 / misc 5025 / total 6952.01 / carry 0 / advance 15900 / paid 1800 / net 10747.99 owed); footer 'Total Expense · split between 4 houses … Exp per head ₹7,137.50' with column totals 4451.71 / 3998.29 / 8450 / 20100 / 28550 / 0 / 28550 / 4800 lining up under the right columns. Status wording verified live: 201 (settled only by fronting, no receipt, no date) = 'Settled', 101 (money received) = 'Paid', 102/202 = 'Partial'. Recorded a ₹500 payment for 102 → paydate flipped to 26-08-2026 (DD-MM-YYYY) and amount paid/totals updated; the test payment was deleted afterwards (verified total_received back to 4800). MIS page: 'Water reconciliation — owner-wise payable' uses the identical 15 columns with mis-row/mis-paystatus/mis-paydate/mis-footer, and the 'Water usage charges — as per meter readings' card (10 cols incl. Combined + full legend) is intact. CSV and PDF downloads from the MIS UI both succeed (mis-2026-08.csv / .pdf). Regression: Water (S.No, Lorry paid by + Tips paid by), Charges, Setup (Floor col), Annual, Overview and the whole rentals workspace (dashboard/units/bills/collections/payouts/report) all render with no ISO dates and ZERO console/page errors.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/rentals/bills?month=", "issue": "STILL OPEN (iterations 8/9, accepted by design): prev_outstanding() master fallback shows a previous-month due for a unit with no lease dates."},
+      {"endpoint": "POST /api/payments", "issue": "STILL OPEN (iteration 9): PaymentIn.direction is a free-form str; 'receipt'-like values are stored and rendered as 'Payout' in the ledger. Use Literal['received','payout']."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reconciliation / MIS reconciliation table", "issues": ["The 15(+1) column table is 2071px wide inside a 1582px container at a 1920 viewport, so 'Balance to pay / receive', 'Date of payment', 'Status' and 'Notify owner' are off-screen until the user horizontally scrolls, with no scroll affordance/shadow. Consider a sticky S.No/Flat/Owner column group, smaller font, or shorter header labels."]},
+      {"screen": "Reconciliation / MIS footer row", "issues": ["The 'Amount paid' total sits flush against the 'Exp per head …' colSpan cell (renders as '₹5,300.00Exp per head ₹7,137.50') — add left padding / a separator to the last footer cell."]},
+      {"screen": "MIS PDF export", "issues": ["The water-usage table breaks across pages leaving a single data row alone on page 2 (header repeats correctly, so cosmetic only). Nothing is clipped or overflowing."]},
+      {"screen": "Water / Charges / Reconciliation forms, rentals month picker", "issues": ["Pre-existing: native input type=date / type=month instead of the shadcn calendar component."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter10_recon_layout.py",
+    "/app/backend/tests/qa_iter10_dump.py",
+    "/app/test_reports/pytest/iter10_results.xml"
+  ],
+  "action_items": [
+    "Optional polish: reduce the horizontal scroll need on the 15-column reconciliation table (sticky left columns / compact headers).",
+    "Optional polish: add padding between the 'Amount paid' total and the 'Exp per head' footer cell.",
+    "Carried over: constrain PaymentIn.direction to a Literal; guard prev_outstanding() on lease_start."
+  ],
+  "critical_code_review_comments": [
+    "ReconTable.jsx footer uses colSpan={extraHead ? 4 : 3} — it silently assumes the extra column count is exactly 1; if a second extra column is ever added the footer will misalign. Derive the span from the actual column count.",
+    "backend/server.py mis_export() is ~150 lines of CSV+PDF layout duplicated between the two formats (headers, TOTAL row, legend built twice) — extract a shared recon_rows()/recon_total_row() helper into a reports module; server.py is still >1100 lines.",
+    "ReconTable chip() derives 'Settled' from payment_status=='paid' && !last_paid_on, duplicating the same rule in server.py pay_label(); a single 'settled' state emitted by the engine would keep screen and exports in sync."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter10_recon_layout.py",
+    "/app/backend/tests/qa_iter10_dump.py",
+    "/app/backend/tests/test_iter9_report_formats.py"
+  ],
+  "success_rate": {"backend": "100% (15/15 iteration-10 tests; 35/35 with iteration-9 suite after stale-header fix)", "frontend": "100% of iteration-10 checks passed"},
+  "seed_data_creation": "No permanent seed data. A ₹500 / 26-08-2026 payment for flat 102 was created via the UI to verify the status chip + payment date update and then deleted (total_received verified back to 4800).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@societyhub.com / admin123 (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "Iteration-10 scope (15-column reconciliation layout on screen + CSV + PDF, Settled/Paid/Partial/Pending wording, Combined column in exports) is fully verified — no functional defects. Use /app/backend/tests/test_iter10_recon_layout.py as the regression suite (it derives expectations from GET /api/statement, so it is data-independent). Container clock is Aug 2026; use the LAST entry of /api/periods (2026-08) for data. pytest.ini runs xdist, do not pass -p/-n flags. Note table header inner_text() comes back UPPERCASE due to CSS text-transform — compare case-insensitively. Legacy suites iter6/iter7/media_notify/backend_test still have known data-dependent failures against the shared preview DB (not code regressions).",
+  "rca_of_the_issue": "No functional defect found this round. The 3 iteration-9 CSV test failures were caused by the intentional header rename ('House / Flat' → 'Flat No.', 'Payment' → 'Status'); the stale assertions were updated in the test file only, no application code was touched."
+}

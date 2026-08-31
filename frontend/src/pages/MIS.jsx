@@ -3,9 +3,11 @@ import { toast } from "sonner";
 import { FileDown, FileText } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
 import { useApp } from "@/context/AppContext";
-import { PageHeader, Card, Stat, NetBadge, Empty } from "@/components/Common";
+import { PageHeader, Card, Stat, Empty } from "@/components/Common";
+import { ReconTable } from "@/components/ReconTable";
 import { Button } from "@/components/ui/button";
 import { money, monthLabel, num, litres } from "@/lib/format";
+import { WaterUsageReport } from "@/components/WaterUsageReport";
 import { useStatement } from "@/hooks/useStatement";
 
 export default function MIS() {
@@ -51,39 +53,13 @@ export default function MIS() {
               sub={`${money(t?.total_owes)} receivable · ${money(t?.total_owed)} payable`} />
       </div>
 
-      <Card title="Owner-wise maintenance payable" testId="mis-table-card" className="mb-8">
+      <Card title="Water reconciliation — owner-wise payable" testId="mis-table-card" className="mb-8">
         {!statement?.rows?.length ? <Empty testId="mis-empty" title="No data for this period" hint="Enter charges and readings to generate the MIS." /> : (
-          <div className="overflow-x-auto">
-            <table className="data-table">
-              <thead>
-                <tr><th>Flat</th><th>Owner</th><th>Tenant</th><th className="text-right">Water</th>
-                  <th className="text-right">Regular</th><th className="text-right">Ad-hoc</th>
-                  <th className="text-right">Total payable</th><th className="text-right">Paid by tenant</th>
-                  <th className="text-right">Paid by owner</th><th className="text-right">Fronted</th>
-                  <th className="text-right">Carry-in</th><th>Balance</th></tr>
-              </thead>
-              <tbody>
-                {statement.rows.map((r) => (
-                  <tr key={r.flat_id} data-testid={`mis-row-${r.flat_number}`}>
-                    <td className="font-semibold">{r.flat_number}</td>
-                    <td>{r.owner_name}</td>
-                    <td className="text-slate-500">{r.tenant_name || "—"}</td>
-                    <td className="num">{money(r.water_cost)}</td>
-                    <td className="num">{money(r.recurring_share)}</td>
-                    <td className="num">{money(r.maintenance_share)}</td>
-                    <td className="num font-semibold">{money(r.base_cost)}</td>
-                    <td className="num">{money(r.received_by_tenant)}</td>
-                    <td className="num">{money(r.received_by_owner)}</td>
-                    <td className="num text-emerald-700">{money(r.contributions)}</td>
-                    <td className="num">{money(r.carry_in)}</td>
-                    <td><NetBadge value={r.net} testId={`mis-net-${r.flat_number}`} /></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ReconTable rows={statement.rows} totals={t} testPrefix="mis" />
         )}
       </Card>
+
+      <WaterUsageReport statement={statement} month={month} />
 
       <div className="grid lg:grid-cols-2 gap-6">
         <Card title="Water reconciliation" testId="mis-water-card">

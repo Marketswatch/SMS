@@ -51,13 +51,14 @@ export default function Overview() {
               ) : (
                 <div className="overflow-x-auto">
                   <table className="data-table">
-                    <thead><tr><th>Building</th><th className="text-right">Flats</th>
+                    <thead><tr><th className="text-right">S.No</th><th>Building</th><th className="text-right">Flats</th>
                       <th className="text-right">Billed</th><th className="text-right">Collected</th>
                       <th className="text-right">Outstanding</th></tr></thead>
                     <tbody>
-                      {data.maintenance.buildings.map((b) => (
+                      {data.maintenance.buildings.map((b, i) => (
                         <tr key={b.property_id} data-testid={`overview-building-${b.name}`}
                             className="cursor-pointer" onClick={() => nav("/mis")}>
+                          <td className="num text-slate-500">{i + 1}</td>
                           <td className="font-semibold">{b.name}
                             {b.status === "locked" && <span className="text-slate-400 font-normal"> · locked</span>}</td>
                           <td className="num">{b.flats}</td>
@@ -67,7 +68,7 @@ export default function Overview() {
                         </tr>
                       ))}
                       <tr>
-                        <td colSpan={2} className="font-semibold text-right">Total</td>
+                        <td colSpan={3} className="font-semibold text-right">Total</td>
                         <td className="num font-semibold">{money(mt.billable)}</td>
                         <td className="num font-semibold">{money(mt.collected)}</td>
                         <td className="num font-semibold">{money(mt.outstanding)}</td>
@@ -84,12 +85,13 @@ export default function Overview() {
               ) : (
                 <div className="overflow-x-auto">
                   <table className="data-table">
-                    <thead><tr><th>Property</th><th>Status</th><th className="text-right">Rent due</th>
+                    <thead><tr><th className="text-right">S.No</th><th>Property</th><th>Status</th><th className="text-right">Rent due</th>
                       <th className="text-right">Collected</th><th className="text-right">Net to owner</th></tr></thead>
                     <tbody>
-                      {data.rentals.rows.map((r) => (
+                      {data.rentals.rows.map((r, i) => (
                         <tr key={r.unit_id} data-testid={`overview-unit-${r.name}`}
                             className="cursor-pointer" onClick={() => nav("/rentals")}>
+                          <td className="num text-slate-500">{i + 1}</td>
                           <td className="font-semibold">{r.name}</td>
                           <td className="capitalize text-slate-500">{r.status}</td>
                           <td className="num">{money(r.rent_due)}</td>
@@ -98,7 +100,7 @@ export default function Overview() {
                         </tr>
                       ))}
                       <tr>
-                        <td colSpan={2} className="font-semibold text-right">Total</td>
+                        <td colSpan={3} className="font-semibold text-right">Total</td>
                         <td className="num font-semibold">{money(rt.rent_due)}</td>
                         <td className="num font-semibold">{money(rt.rent_collected)}</td>
                         <td className="num font-semibold">{money(rt.net_to_owner)}</td>
@@ -115,10 +117,11 @@ export default function Overview() {
                   className="mt-6">
               <div className="overflow-x-auto">
                 <table className="data-table">
-                  <thead><tr><th>Building</th><th>Items</th><th className="text-right">Amount</th></tr></thead>
+                  <thead><tr><th className="text-right">S.No</th><th>Building</th><th>Items</th><th className="text-right">Amount</th></tr></thead>
                   <tbody>
-                    {data.rentals.building_tally.map((b) => (
+                    {data.rentals.building_tally.map((b, i) => (
                       <tr key={b.building} data-testid={`overview-tally-${b.building}`}>
+                        <td className="num text-slate-500">{i + 1}</td>
                         <td className="font-semibold">{b.building}</td>
                         <td className="text-slate-500">{b.items.map((i) => i.description).join("; ")}</td>
                         <td className="num font-semibold">{money(b.amount)}</td>

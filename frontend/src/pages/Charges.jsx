@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { money, monthLabel, CHARGE_TYPES } from "@/lib/format";
+import { money, monthLabel, CHARGE_TYPES, dmy } from "@/lib/format";
 import { useStatement } from "@/hooks/useStatement";
 
 export default function Charges() {
@@ -98,18 +98,19 @@ export default function Charges() {
   const renderTable = (rows, testId) => (
     <div className="overflow-x-auto">
       <table className="data-table">
-        <thead><tr><th>Type</th><th>Description</th><th>Person</th><th className="text-right">Amount</th>
+        <thead><tr><th className="text-right">S.No</th><th>Type</th><th>Description</th><th>Person</th><th className="text-right">Amount</th>
           <th>Fronted by</th><th>As</th><th>Date</th><th>Bill / Work media</th><th /></tr></thead>
         <tbody>
-          {rows.map((c) => (
+          {rows.map((c, i) => (
             <tr key={c.id} data-testid={`${testId}-row-${c.id}`}>
+              <td className="num text-slate-500">{i + 1}</td>
               <td className="capitalize font-semibold">{c.charge_type}</td>
               <td>{c.description || "—"}</td>
               <td className="text-slate-500">{c.person_name || "—"}</td>
               <td className="num">{money(c.amount)}</td>
               <td>{flatName(c.payer_flat_id)}</td>
               <td className="capitalize text-slate-500">{c.payer_type}</td>
-              <td className="text-slate-500">{c.date || "—"}</td>
+              <td className="text-slate-500">{dmy(c.date)}</td>
               <td>{c.media?.length ? <WorkGallery charge={c} testId={`gallery-btn-${c.id}`} /> : <MediaThumbs media={c.media} showCategory />}</td>
               <td className="text-right">
                 {!locked && (
@@ -124,6 +125,18 @@ export default function Charges() {
             </tr>
           ))}
         </tbody>
+        <tfoot>
+          <tr className="bg-slate-50 font-semibold" data-testid={`${testId}-footer`}>
+            <td colSpan={4}>Total Expense · split between {t?.flat_count || 0} house{(t?.flat_count || 0) === 1 ? "" : "s"}</td>
+            <td className="num">{money(rows.reduce((s, c) => s + Number(c.amount || 0), 0))}</td>
+            <td colSpan={4} className="text-slate-500 font-normal">
+              Exp per head{" "}
+              <span className="mono">
+                {money(rows.reduce((s, c) => s + Number(c.amount || 0), 0) / (t?.flat_count || 1))}
+              </span>
+            </td>
+          </tr>
+        </tfoot>
       </table>
     </div>
   );

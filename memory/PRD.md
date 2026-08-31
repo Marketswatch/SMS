@@ -6,43 +6,55 @@ charges and one-time maintenance across building flats, plus a second workspace 
 Property/Rental management (rent collection, lease tracking, vacancy, payouts to associations).
 
 Two workspaces, switchable from the header:
-- **Maintenance Management** — buildings, flats, owners, tanker purchases, meter readings,
-  recurring + ad-hoc charges, per-litre/reserve cost engine, month-end MIS with carry-forward.
+- **Maintenance Management** — buildings, flats (with floor), owners, tanker purchases, meter
+  readings, recurring + ad-hoc charges, per-litre/reserve cost engine, month-end MIS.
 - **Property Management** — per-property master (rent, deposit, lease), monthly Bill → Collect →
   Payout flow, deposits ledger, vacancy tracking, rent receipts, reports.
 
 ## Stack
-React + Tailwind + shadcn/ui · FastAPI + Motor/MongoDB · JWT auth · Emergent object storage for photos.
-
-Key files: `backend/server.py`, `engine.py` (maintenance), `rentals.py` (property),
-`storage.py`; `frontend/src/pages/**`, `pages/rentals/**`, `lib/{api,format,notify,modes}.js`.
+React + Tailwind + shadcn/ui · FastAPI + Motor/MongoDB · JWT auth · Emergent object storage.
+Key files: `backend/{server.py, engine.py, rentals.py, storage.py}`,
+`frontend/src/pages/**`, `pages/rentals/**`, `components/{ReconTable,WaterUsageReport,MediaUpload}.jsx`,
+`lib/{api,format,notify,modes}.js`.
 
 ## Implemented
-- Maintenance: setup, water purchases (incl. tips in per-litre logic), readings, charges,
-  reserves/drawdowns, reconciliation, MIS, annual view, bulk WhatsApp/SMS reminders.
-- Rentals: property master with lease-end autocalc, monthly bills (rent + maintenance + ad-hoc in /
-  tenant-paid out), segregated collections, deposits ledger, building payouts & credits, settlement
-  view, vacancy + lost-rent, rent receipt PDFs, CSV/report export, category master.
-- Media: meter / bill / work-in-progress / completion photo galleries via object storage.
+- Maintenance: setup, water purchases (tips included in per-litre cost), readings, charges,
+  reserve/drawdown, reconciliation, MIS, annual view, bulk WhatsApp/SMS reminders.
+- Rentals: property master with lease-end autocalc, monthly bills (rent + maintenance + ad-hoc),
+  collections, deposits ledger, building payouts & credits, settlement, vacancy + lost rent,
+  rent receipt PDFs, CSV/PDF reports, category master.
+- Media: meter / bill / work-in-progress / completion photo & video galleries via object storage.
 
-### 2026-06 (this session)
-- **Editable bills**: rent, maintenance, payable-to-building and ad-hoc items all editable inline
-  before saving; live total shown. WhatsApp + SMS send buttons on each bill card.
-- **Carry forward**: next month's bill draft auto-fills `carry_forward` = last month's billed total −
-  collected (positive = dues, negative = advance credit). Falls back to the property master when no
-  bill was saved last month, guarded by lease/created-at so new properties don't get bogus dues.
-  Editable / waivable before saving; appears in the WhatsApp/SMS bill text.
-- **Payment modes**: restricted to Cash / UPI / Bank Transfer everywhere (`lib/modes.js`);
-  Reference / UPI txn no. required for all non-cash collections and payouts (enforced on POST and
-  PUT); mode + reference shown in the collections and payouts history tables.
-- Category master seeding made idempotent.
-- Verified by testing agent: iterations 7 and 8.
+### June 2026 — session 2
+- **Editable bills + carry forward** (rentals): all bill lines editable before saving; previous
+  month's unpaid balance auto-carried (advance shown as negative credit), editable/waivable;
+  WhatsApp + SMS send buttons per bill. Verified iterations 7–8.
+- **Payment modes**: Cash / UPI / Bank Transfer only, Reference no. required for non-cash on
+  collections and payouts (POST + PUT), mode + reference shown in history tables.
+- **Report formatting** (verified iterations 9–10):
+  - S.No first column on every report/reconciliation table (maintenance + rentals).
+  - All dates DD-MM-YYYY everywhere — screens, CSV, PDF and receipts (`lib/format.js` `dmy()`,
+    `server.py`/`rentals.py` `dmy()`).
+  - Water purchases: separate **Lorry paid by** and **Tips paid by** columns + Total Expense /
+    Exp-per-head footer.
+  - **Floor** per flat (Building Setup, add form + inline editor), shown in all reports.
+  - **Water reconciliation report** (Reconcile + MIS, shared `ReconTable.jsx`) with the owner's
+    exact columns: S.No · Flat No. · Floor · Owner · Metered cost · Non-metered cost (reserve) ·
+    Total water cost · Misc · Total amount · Bal brought forward · Advance paid (fronting) ·
+    Amount paid · Balance to pay/receive · Date of payment · Status (Paid / Settled / Partial /
+    Pending) — with a TOTAL row, Total Expense, split by no. of houses and Exp per head.
+  - **Water usage charges — as per meter readings** report: per-meter S.No, House, Floor, Owner,
+    Meter number, Starting/Ending unit, Consumed units, Water charges, Combined per flat, plus the
+    legend (total lorries, water received, water cost, cost per litre, metered charges,
+    non-metered consumption/cost, per-house share).
+  - MIS CSV + PDF exports mirror both reports exactly (PDF visually verified).
+- `PaymentIn.direction` / `payer_type` constrained to literals; rental category seeding idempotent.
 
 ## Backlog
-- P1 Management fee / commission cut on properties managed for others, with owner payout after commission.
-- P1 Property ledger: single unified timeline of bills, collections and payouts per property.
+- P1 Management fee / commission on properties managed for others, with owner payout after fee.
+- P1 Property ledger: one property's bills, collections and payouts on a single timeline.
 - P2 Deposits: add mode + reference to match the collections policy.
-- P2 Video upload support alongside photos for meters / work.
-- P2 Mobile field refinements (large number pads, camera-first entry).
+- P2 Sticky left columns on the 15-column reconciliation table (currently horizontal scroll).
+- P2 Mobile field refinements (large number pads, camera-first entry); shadcn date pickers.
 - P2 Tenant view-only portal; co-owner split handling.
-- P2 Split `rentals.py` (~750 lines) into modules; batch previous-month queries in `prev_outstanding`.
+- P2 Split `rentals.py` / `server.py` into modules; batch previous-month queries.

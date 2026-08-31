@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { money, litres, num, monthLabel } from "@/lib/format";
+import { money, litres, num, monthLabel, dmy } from "@/lib/format";
 import { useStatement } from "@/hooks/useStatement";
 
 export default function Water() {
@@ -209,16 +209,17 @@ export default function Water() {
                 <div className="overflow-x-auto">
                   <table className="data-table">
                     <thead>
-                      <tr><th>Date</th><th className="text-right">Sump</th><th className="text-right">Syntex</th>
+                      <tr><th className="text-right">S.No</th><th>Date</th><th className="text-right">Sump</th><th className="text-right">Syntex</th>
                         <th className="text-right">Total</th><th className="text-right">Lorry</th>
                         <th className="text-right">Tips</th><th className="text-right">Total cost</th>
-                        <th className="text-right">₹/L</th><th>Paid by</th>
+                        <th className="text-right">₹/L</th><th>Lorry paid by</th><th>Tips paid by</th>
                         <th>Media</th><th /></tr>
                     </thead>
                     <tbody>
-                      {tankers.map((tk) => (
+                      {tankers.map((tk, i) => (
                         <tr key={tk.id} data-testid={`tanker-row-${tk.id}`}>
-                          <td>{tk.date}</td>
+                          <td className="num text-slate-500">{i + 1}</td>
+                          <td>{dmy(tk.date)}</td>
                           <td className="num">{num(tk.qty_sump, 0)}</td>
                           <td className="num">{num(tk.qty_syntex, 0)}</td>
                           <td className="num font-semibold">{num(tk.total_qty, 0)}</td>
@@ -227,6 +228,12 @@ export default function Water() {
                           <td className="num font-semibold">{money((tk.amount || 0) + (tk.tips_amount || 0))}</td>
                           <td className="num">{num((((tk.amount || 0) + (tk.tips_amount || 0)) / (tk.total_qty || 1)), 4)}</td>
                           <td>{flatName(tk.payer_flat_id)} <span className="text-xs text-slate-400">({tk.payer_type})</span></td>
+                          <td data-testid={`tanker-tips-payer-${tk.id}`}>
+                            {tk.tips_amount ? (
+                              <>{flatName(tk.tips_payer_flat_id || tk.payer_flat_id)}{" "}
+                                <span className="text-xs text-slate-400">({tk.tips_payer_type || tk.payer_type})</span></>
+                            ) : <span className="text-slate-400">—</span>}
+                          </td>
                           <td><MediaThumbs media={tk.media} /></td>
                           <td className="text-right">
                             {!locked && (
@@ -245,6 +252,18 @@ export default function Water() {
                         </tr>
                       ))}
                     </tbody>
+                    <tfoot>
+                      <tr className="bg-slate-50 font-semibold" data-testid="tankers-footer">
+                        <td colSpan={4}>Total Expense · split between {t?.flat_count || 0} house{(t?.flat_count || 0) === 1 ? "" : "s"}</td>
+                        <td className="num">{num(t?.total_litres, 0)}</td>
+                        <td className="num">{money((t?.total_water_spend || 0) - (t?.total_tips || 0))}</td>
+                        <td className="num">{money(t?.total_tips)}</td>
+                        <td className="num">{money(t?.total_water_spend)}</td>
+                        <td colSpan={5} className="text-slate-500 font-normal">
+                          Exp per head <span className="mono">{money((t?.total_water_spend || 0) / (t?.flat_count || 1))}</span>
+                        </td>
+                      </tr>
+                    </tfoot>
                   </table>
                 </div>
               )}
@@ -271,7 +290,7 @@ export default function Water() {
                 ))}
                 <div className="overflow-x-auto">
                   <table className="data-table">
-                    <thead><tr><th>Meter</th><th>Building / Flat</th><th className="text-right">Opening</th>
+                    <thead><tr><th className="text-right">S.No</th><th>Meter</th><th>Building / Flat</th><th className="text-right">Opening</th>
                       <th className="text-right">Closing</th><th className="text-right">Consumption</th>
                       <th>Meter photo / video</th></tr></thead>
                     <tbody>
@@ -279,6 +298,7 @@ export default function Water() {
                         const cons = r.closing !== null && r.closing !== "" ? Number(r.closing) - Number(r.opening) : null;
                         return (
                           <tr key={r.meter_id} data-testid={`reading-row-${r.label}`}>
+                            <td className="num text-slate-500">{idx + 1}</td>
                             <td className="font-semibold">{r.label}</td>
                             <td><span className="text-slate-400">{property?.name} / </span>{flatName(r.flat_id)}</td>
                             <td className="text-right">

@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { money } from "@/lib/format";
+import { money, FLOORS } from "@/lib/format";
 
 const PAYER_KEYS = ["water", "cleaning", "sweeper", "security", "electricity", "misc", "maintenance", "tips"];
 const RECURRING_KEYS = ["security", "electricity", "cleaning", "sweeper"];
@@ -22,7 +22,7 @@ export default function Setup() {
   const [users, setUsers] = useState([]);
 
   const [newProp, setNewProp] = useState({ name: "", address: "" });
-  const [flat, setFlat] = useState({ property_id: "", number: "", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
+  const [flat, setFlat] = useState({ property_id: "", number: "", floor: "", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
   const [meter, setMeter] = useState({ flat_id: "", label: "", opening: "" });
   const [tank, setTank] = useState({ name: "", tank_type: "sump", capacity: "" });
   const [payers, setPayers] = useState({});
@@ -74,12 +74,12 @@ export default function Setup() {
     const target = flat.property_id || propertyId;
     try {
       await api.post("/flats", {
-        property_id: target, number: flat.number, owner_name: flat.owner_name,
+        property_id: target, number: flat.number, floor: flat.floor, owner_name: flat.owner_name,
         owner_user_id: flat.owner_user_id || null, owner_phone: flat.owner_phone,
         tenant_name: flat.tenant_name, tenant_user_id: flat.tenant_user_id || null,
         tenant_phone: flat.tenant_phone,
       });
-      setFlat({ property_id: target, number: "", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
+      setFlat({ property_id: target, number: "", floor: "", owner_name: "", owner_user_id: "", owner_phone: "", tenant_name: "", tenant_user_id: "", tenant_phone: "" });
       toast.success(`Flat added to ${properties.find((p) => p.id === target)?.name || "building"}`);
       if (target !== propertyId) setPropertyId(target);
       load();
@@ -188,6 +188,16 @@ export default function Setup() {
                          value={flat.number} onChange={(e) => setFlat({ ...flat, number: e.target.value })} />
                 </div>
                 <div>
+                  <Label className="label-caps">Floor</Label>
+                  <Select value={flat.floor || "none"} onValueChange={(v) => setFlat({ ...flat, floor: v === "none" ? "" : v })}>
+                    <SelectTrigger className="mt-2 h-11" data-testid="flat-floor-select"><SelectValue placeholder="Select floor" /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="none">Not specified</SelectItem>
+                      {FLOORS.map((f) => <SelectItem key={f} value={f}>{f}</SelectItem>)}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div>
                   <Label className="label-caps">Owner name</Label>
                   <Input className="mt-2 h-11" required data-testid="flat-owner-input"
                          value={flat.owner_name} onChange={(e) => setFlat({ ...flat, owner_name: e.target.value })} />
@@ -241,12 +251,29 @@ export default function Setup() {
               {!flats.length ? <Empty testId="flats-empty" title="No flats yet" hint="Each flat is one equal share of common costs." /> : (
                 <div className="overflow-x-auto">
                   <table className="data-table">
-                    <thead><tr><th>Building / Flat</th><th>Owner</th><th>Owner phone</th><th>Tenant</th><th className="text-right">Meters</th><th /></tr></thead>
+                    <thead><tr><th className="text-right">S.No</th><th>Building / Flat</th><th>Floor</th><th>Owner</th><th>Owner phone</th><th>Tenant</th><th className="text-right">Meters</th><th /></tr></thead>
                     <tbody>
-                      {flats.map((f) => (
+                      {flats.map((f, i) => (
                         <tr key={f.id} data-testid={`flat-config-row-${f.number}`}>
+                          <td className="num text-slate-500">{i + 1}</td>
                           <td className="font-semibold">
                             <span className="text-slate-400 font-normal">{property?.name} / </span>{f.number}
+                          </td>
+                          <td>
+                            <Select value={f.floor || "none"}
+                                    onValueChange={async (v) => {
+                                      try {
+                                        await api.put(`/flats/${f.id}`, { ...f, floor: v === "none" ? "" : v });
+                                        toast.success(`Floor saved for flat ${f.number}`);
+                                        load();
+                                      } catch (err) { toast.error(errMsg(err)); }
+                                    }}>
+                              <SelectTrigger className="h-9 w-32" data-testid={`flat-floor-edit-${f.number}`}><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">—</SelectItem>
+                                {FLOORS.map((x) => <SelectItem key={x} value={x}>{x}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
                           </td>
                           <td>{f.owner_name}</td>
                           <td className="mono text-slate-500">

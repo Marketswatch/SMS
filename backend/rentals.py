@@ -35,6 +35,26 @@ async def rent_roll_for(db, month: str) -> dict:
     return await _statement_builder(month)
 
 
+MODE_LABELS = {"cash": "Cash", "upi": "UPI", "bank": "Bank Transfer"}
+
+
+def dmy(d) -> str:
+    """DD-MM-YYYY for every date shown in an export or receipt."""
+    s = str(d or "")[:10]
+    parts = s.split("-")
+    return f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts) == 3 else (s or "—")
+
+
+def month_name(m: str) -> str:
+    parts = str(m or "").split("-")
+    if len(parts) < 2:
+        return str(m or "")
+    try:
+        return f"{calendar.month_name[int(parts[1])]} {parts[0]}"
+    except (ValueError, IndexError):
+        return str(m)
+
+
 def r2(x):
     return round(float(x or 0), 2)
 
@@ -642,25 +662,30 @@ def make_router(db):
     async def export_statement(month: str, format: str = Query("csv"), user: dict = Depends(admin_user)):
         data = await build_statement(month)
         t = data["totals"]
-        head = ["Property", "Building", "Tenant", "Rent", "Maintenance", "Ad-hoc to collect",
-                "Paid by tenant for me", "Total to collect", "Rent received", "Maintenance received",
+        head = ["S.No", "Property", "Building", "Tenant", "Rent", "Maintenance", "Ad-hoc to collect",
+                "Paid by tenant for me", "Previous dues", "Total to collect", "Rent received", "Maintenance received",
                 "Ad-hoc received", "Total received", "Balance", "Status", "Deposit held"]
+        counter = {"n": 0}
 
         def vals(r):
-            return [r["name"], r["building"], r["tenant_name"], r["billed_rent"], r["billed_maintenance"],
-                    r["adhoc_collect"], r["tenant_paid_on_my_behalf"], r["total_to_collect"], r["rent_paid"],
+            counter["n"] += 1
+            return [counter["n"], r["name"], r["building"], r["tenant_name"], r["billed_rent"], r["billed_maintenance"],
+                    r["adhoc_collect"], r["tenant_paid_on_my_behalf"], r.get("carry_forward", 0),
+                    r["total_to_collect"], r["rent_paid"],
                     r["maintenance_paid"], r["adhoc_paid"], r["collected"], r["balance"], r["status"],
                     r["deposit_held"]]
 
-        bhead = ["Building", "Payable", "Paid", "Credits", "Balance"]
+        bhead = ["S.No", "Building", "Payable", "Paid", "Credits", "Balance"]
+        bcounter = {"n": 0}
 
         def bvals(b):
-            return [b["building"], b["payable"], b["paid"], b["credits"], b["balance"]]
+            bcounter["n"] += 1
+            return [bcounter["n"], b["building"], b["payable"], b["paid"], b["credits"], b["balance"]]
 
         if format == "csv":
             buf = io.StringIO()
             w = csv.writer(buf)
-            w.writerow([f"SocietyHub Property Statement — {month}"])
+            w.writerow([f"SocietyHub Property Statement — {month_name(month)}"])
             w.writerow([])
             w.writerow(["Properties", t["unit_count"], "Occupied", t["occupied"], "Vacant", t["vacant"]])
             w.writerow(["To collect", t["total_to_collect"], "Collected", t["collected"], "Balance", t["balance"]])
@@ -687,7 +712,7 @@ def make_router(db):
         doc = SimpleDocTemplate(buf, pagesize=landscape(A4), title=f"Properties {month}")
         styles = getSampleStyleSheet()
         story = [Paragraph("SocietyHub — Property Statement", styles["Title"]),
-                 Paragraph(f"Period: {month}", styles["Normal"]), Spacer(1, 10)]
+                 Paragraph(f"Period: {month_name(month)}", styles["Normal"]), Spacer(1, 10)]
         summary = [["To collect", t["total_to_collect"], "Collected", t["collected"], "Balance", t["balance"]],
                    ["Owed to buildings", t["building_payable"], "Paid", t["building_paid"],
                     "Credits", t["building_credits"]],
@@ -732,9 +757,10 @@ def make_router(db):
         styles = getSampleStyleSheet()
         rows = [["Property", unit.get("name", "")],
                 ["Tenant", unit.get("tenant_name", "") or "—"],
-                ["For the month of", pay["month"]],
-                ["Date received", pay.get("date", "")],
-                ["Mode", str(pay.get("mode", "")).upper()],
+                ["For the month of", month_name(pay["month"])],
+                ["Date received", dmy(pay.get("date"))],
+                ["Mode", MODE_LABELS.get(str(pay.get("mode", "")).lower(), str(pay.get("mode", "")).upper())],
+                ["Reference", pay.get("reference") or "—"],
                 ["Rent", f"Rs. {r2(pay.get('rent_paid')):,.2f}"],
                 ["Maintenance", f"Rs. {r2(pay.get('maintenance_paid')):,.2f}"],
                 ["Ad-hoc", f"Rs. {r2(pay.get('adhoc_paid')):,.2f}"],

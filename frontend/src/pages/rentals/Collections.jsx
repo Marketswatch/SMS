@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { money, monthLabel, plainAmt } from "@/lib/format";
+import { money, monthLabel, plainAmt, dmy } from "@/lib/format";
 import { openWhatsApp } from "@/lib/notify";
 import { MODES, modeLabel } from "@/lib/modes";
 
@@ -95,7 +95,7 @@ export default function Collections() {
   const shareReceipt = (p) => {
     const u = unitOf(p.unit_id);
     openWhatsApp(u?.tenant_phone, [`${u?.name} — ${monthLabel(p.month)}`,
-      `Received ${plainAmt(p.total)} on ${p.date} (${modeLabel(p.mode)}${p.reference ? ` · ${p.reference}` : ""})`,
+                      `Received ${plainAmt(p.total)} on ${dmy(p.date)} (${modeLabel(p.mode)}${p.reference ? ` · ${p.reference}` : ""})`,
       `Rent ${plainAmt(p.rent_paid)} · Maintenance ${plainAmt(p.maintenance_paid)} · Ad-hoc ${plainAmt(p.adhoc_paid)}`,
       "Thank you."].join("\n"));
   };
@@ -199,12 +199,13 @@ export default function Collections() {
                 {!stmt?.rows?.length ? <Empty testId="position-empty" title="No properties yet" hint="Add properties first." /> : (
                   <div className="overflow-x-auto">
                     <table className="data-table">
-                      <thead><tr><th>Property</th><th className="text-right">To collect</th>
+                      <thead><tr><th className="text-right">S.No</th><th>Property</th><th className="text-right">To collect</th>
                         <th className="text-right">Rent in</th><th className="text-right">Maint. in</th>
                         <th className="text-right">Ad-hoc in</th><th className="text-right">Balance</th><th>Status</th></tr></thead>
                       <tbody>
-                        {stmt.rows.map((r) => (
+                        {stmt.rows.map((r, i) => (
                           <tr key={r.unit_id} data-testid={`position-row-${r.name}`}>
+                            <td className="num text-slate-500">{i + 1}</td>
                             <td className="font-semibold">{r.name}</td>
                             <td className="num">{money(r.total_to_collect)}</td>
                             <td className="num text-emerald-700">{money(r.rent_paid)}</td>
@@ -224,13 +225,14 @@ export default function Collections() {
                 {!payments.length ? <Empty testId="collections-empty" title="Nothing collected yet" hint="Record money as it comes in." /> : (
                   <div className="overflow-x-auto">
                     <table className="data-table">
-                      <thead><tr><th>Date</th><th>Property</th><th className="text-right">Rent</th>
+                      <thead><tr><th className="text-right">S.No</th><th>Date</th><th>Property</th><th className="text-right">Rent</th>
                         <th className="text-right">Maint.</th><th className="text-right">Ad-hoc</th>
                         <th className="text-right">Total</th><th>Mode</th><th>Reference</th><th /></tr></thead>
                       <tbody>
-                        {payments.map((p) => (
+                        {payments.map((p, i) => (
                           <tr key={p.id} data-testid={`payment-row-${p.id}`}>
-                            <td>{p.date}</td>
+                            <td className="num text-slate-500">{i + 1}</td>
+                            <td>{dmy(p.date)}</td>
                             <td className="font-semibold">{unitName(p.unit_id)}</td>
                             <td className="num">{money(p.rent_paid)}</td>
                             <td className="num">{money(p.maintenance_paid)}</td>
@@ -304,11 +306,12 @@ export default function Collections() {
               {!deposits.length ? <Empty testId="deposits-empty" title="No deposit entries" hint="Deposits are tracked across all months." /> : (
                 <div className="overflow-x-auto">
                   <table className="data-table">
-                    <thead><tr><th>Date</th><th>Property</th><th>Type</th><th className="text-right">Amount</th><th>Notes</th><th /></tr></thead>
+                    <thead><tr><th className="text-right">S.No</th><th>Date</th><th>Property</th><th>Type</th><th className="text-right">Amount</th><th>Notes</th><th /></tr></thead>
                     <tbody>
-                      {deposits.map((d) => (
+                      {deposits.map((d, i) => (
                         <tr key={d.id} data-testid={`deposit-row-${d.id}`}>
-                          <td>{d.date}</td>
+                          <td className="num text-slate-500">{i + 1}</td>
+                          <td>{dmy(d.date)}</td>
                           <td className="font-semibold">{unitName(d.unit_id)}</td>
                           <td>{DEP_KINDS.find((k) => k.value === d.kind)?.label || d.kind}</td>
                           <td className="num">{money(d.amount)}</td>

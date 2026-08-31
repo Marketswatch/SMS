@@ -71,14 +71,15 @@ export default function Annual() {
           <Card title={`Per-owner summary — ${year}`} testId="annual-owner-card" className="mb-6">
             <div className="overflow-x-auto">
               <table className="data-table">
-                <thead><tr><th>Flat</th><th>Owner</th><th className="text-right">Consumption (L)</th>
+                <thead><tr><th className="text-right">S.No</th><th>Flat</th><th>Owner</th><th className="text-right">Consumption (L)</th>
                   <th className="text-right">Water</th><th className="text-right">Recurring</th>
                   <th className="text-right">Repairs</th><th className="text-right">Total billed</th>
                   <th className="text-right">Fronted</th><th className="text-right">Paid</th>
                   <th>Closing balance</th></tr></thead>
                 <tbody>
-                  {data.rows.map((r) => (
+                  {data.rows.map((r, i) => (
                     <tr key={r.flat_id} data-testid={`annual-row-${r.flat_number}`}>
+                      <td className="num text-slate-500">{i + 1}</td>
                       <td className="font-semibold">{r.flat_number}</td>
                       <td>{r.owner_name}</td>
                       <td className="num">{num(r.consumption)}</td>
@@ -99,13 +100,14 @@ export default function Annual() {
           <Card title="Month by month" testId="annual-months-card">
             <div className="overflow-x-auto">
               <table className="data-table">
-                <thead><tr><th>Month</th><th>Status</th><th className="text-right">Litres</th>
+                <thead><tr><th className="text-right">S.No</th><th>Month</th><th>Status</th><th className="text-right">Litres</th>
                   <th className="text-right">Water spend</th><th className="text-right">Avg ₹/L</th>
                   <th className="text-right">Recurring</th><th className="text-right">Repairs</th>
                   <th className="text-right">Billed</th><th className="text-right">Collected</th></tr></thead>
                 <tbody>
-                  {data.months.map((m) => (
+                  {data.months.map((m, i) => (
                     <tr key={m.month} data-testid={`annual-month-${m.month}`}>
+                      <td className="num text-slate-500">{i + 1}</td>
                       <td className="font-semibold">{monthLabel(m.month)}</td>
                       <td>
                         <span className={`text-xs px-2 py-0.5 rounded border ${m.status === "locked"

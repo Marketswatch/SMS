@@ -1,0 +1,48 @@
+{
+  "summary": "Iteration 9 verification of SocietyHub report-formatting work (S.No everywhere, DD-MM-YYYY dates, tips payer column, Floor field, sewage-sheet owner statement, new meter-wise Water Usage report, export changes). Backend: new pytest suite /app/backend/tests/test_iter9_report_formats.py — 20/20 passed against the public preview URL (flat floor create/update/persist, statement rows carrying floor/payment_status/last_paid_on, meter rows carrying flat_number/floor/owner_name/charge, totals.tanker_count + metered_charges consistency, tanker with a DIFFERENT tips payer routing contributions correctly, MIS CSV headers/serials/Total Expense+Exp per head/water-usage section/no ISO dates, MIS PDF text extraction, annual CSV+PDF S.No, rentals CSV/PDF S.No + Previous dues, rent receipt PDF DD-MM-YYYY + readable Mode + Reference row). Frontend (Playwright, public URL, admin login + Maintenance workspace): MIS owner table (S.No first, Floor col, mis-footer 'Total Expense · split between 4 houses ... Exp per head'), Water usage report card with all 10 columns, footer and full legend, combined column verified with a 2-meter flat (rowSpan grouping correct, Combined = 943.93 = 927.44+16.49); Reconciliation owner statement (S.No, House/Flat, Floor, 'Owner (Tenant — tenant)', Amount, Paid/Partial/Pending chip, Payment date DD-MM-YYYY, footer) and a recorded payment flipped flat 202 Pending -> Partial with date 21-08-2026; Water tanker table (S.No, DD-MM-YYYY dates, separate 'Lorry paid by' / 'Tips paid by' columns, footer with Exp per head) and a UI-created tanker with lorry payer 101 + tips payer 201 rendered both columns correctly; Meter readings S.No; Charges Recurring + One-time tabs (S.No, Date DD-MM-YYYY, recurring-footer/adhoc-footer with Total Expense + Exp per head); Setup > Flats floor dropdown on add form + inline per-row editor (set 201 to Third, persisted after reload and propagated to MIS/Reconcile/Water-usage); MIS CSV and PDF download from the UI; rentals regression (Units, Collections, Deposits, Payouts building table, Property Reports all have S.No and DD-MM-YYYY dates, no ISO dates anywhere, Bills page carry-forward 'Previous dues' intact). Zero console errors on every page visited (Dashboard, Overview, Annual, MIS, Reconcile, Water, Charges, Setup, all rentals pages).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/payments", "issue": "PaymentIn.direction is a free-form str (default 'received'). Posting direction='receipt' is accepted; the engine treats anything != 'payout' as money received, but the Reconcile ledger badge renders it as 'Payout' — silently mislabeled data. Use Literal['received','payout']."},
+      {"endpoint": "GET /api/rentals/bills?month=", "issue": "STILL OPEN from iteration 8: prev_outstanding() fallback invents carry_forward (10500) for months before a unit existed when the unit has no lease_start."},
+      {"endpoint": "GET /api/mis/export (csv/pdf)", "issue": "Water-usage section omits the per-flat 'Combined' column that the UI shows for flats with 2+ meters, so a multi-meter flat's combined charge is not visible in the export (parity gap with the on-screen report)."},
+      {"endpoint": "PUT /api/readings", "issue": "Body field is 'readings'; no request-shape docs/testids issue, just noting for future test authors (sending 'rows' returns 422)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reconciliation / MIS payment chip", "issues": ["A flat whose net is <= 0 only because it fronted expenses (e.g. 101, 201) shows chip 'Paid' with Payment date '—' even though nothing was received. Matches engine intent (settled) but on the user's Paid/Pending sheet it can read as 'money received'. Confirm the wording with the user (e.g. 'Settled' vs 'Paid')."]},
+      {"screen": "Water / Charges / Reconciliation forms + rentals month picker", "issues": ["Native browser date/month inputs (input type=date / type=month) are used instead of the shadcn calendar component (pre-existing, not introduced this round)."]},
+      {"screen": "Water usage report (multi-meter flat)", "issues": ["In a rowSpan group the S.No/House/Floor/Owner cells are top-aligned while the Combined cell renders vertically centered, so the grouped row looks slightly unbalanced. Cosmetic only."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter9_report_formats.py",
+    "/app/backend/tests/qa_iter9_seed.py",
+    "/app/test_reports/pytest/iter9_results.xml"
+  ],
+  "action_items": [
+    "Optional: constrain PaymentIn.direction to a Literal so 'receipt'-style values cannot be stored and mislabeled as Payout in the ledger.",
+    "Optional: add the per-flat Combined water charge to the MIS CSV/PDF water-usage section for parity with the UI.",
+    "Still open from iteration 8: guard prev_outstanding() on lease_start/created_at so units without lease dates do not show bogus previous dues.",
+    "Confirm wording of the 'Paid' chip for flats that are settled only via fronted expenses (no payment received, no payment date)."
+  ],
+  "critical_code_review_comments": [
+    "backend/server.py is 1137 lines and rentals.py 785 — the MIS CSV/PDF builders (~200 lines) should move into a reports module.",
+    "engine.compute_statement payment_status derives 'paid' from net <= 0.005 while last_paid_on stays empty; consider a distinct 'settled' state so the report's Paid/Pending column is unambiguous.",
+    "Legacy suites (test_iter6_rentals_rebuild.py, test_media_notify.py, backend_test.py::TestTipsInWaterCost, test_iter7 draft test) assert absolute amounts against the shared preview DB and now fail purely because of accumulated TEST_ records and this round's seed data — 15 failures total, all data-dependent, not code regressions. They need per-test fixtures/cleanup or relative assertions."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter9_report_formats.py",
+    "/app/backend/tests/qa_iter9_seed.py"
+  ],
+  "success_rate": {"backend": "100% (20/20 iteration-9 tests)", "frontend": "100% of iteration-9 report-format checks passed"},
+  "seed_data_creation": "Sunrise Residency (2026-08): floors set (101/102 Ground, 201 Third after UI test, 202 First), 2 tankers with tips payer != lorry payer, 1 recurring charge (Maid, 2000) + 1 one-time charge (Motor repair, 3000), one 1000 payment for flat 202 (2026-08-21). A temporary second meter 'Meter 101-B' on flat 101 and a stray direction='receipt' payment were created to verify the Combined column and then DELETED. Meter readings already existed in the demo.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@societyhub.com / admin123 (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "Container clock is Aug 2026, so the frontend default period is 2026-08 — use the LAST entry of /api/periods (not the first, which is the empty 2026-07) when asserting on data. Rentals export endpoint is GET /api/rentals/export?month=&format=; MIS/annual exports use ?format= (not fmt) and annual also needs ?year=. PUT /api/readings expects body key 'readings'. Iteration-9 report-format work (S.No, DD-MM-YYYY, tips payer, Floor, owner statement, water usage report, exports) is fully verified — no need to re-test in depth. Legacy suites iter6/iter7/media_notify/backend_test have data-dependent failures against the shared preview DB.",
+  "rca_of_the_issue": "No functional defect found in this round's scope. The only new observation with user impact is the semantic overlap of the 'Paid' chip with settled-by-fronting flats, and the missing Combined column in the exported water-usage section."
+}

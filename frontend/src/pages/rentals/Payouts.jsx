@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { money, monthLabel } from "@/lib/format";
+import { money, monthLabel, dmy } from "@/lib/format";
 import { MODES, modeLabel } from "@/lib/modes";
 
 export default function Payouts() {
@@ -79,12 +79,13 @@ export default function Payouts() {
         ) : (
           <div className="overflow-x-auto">
             <table className="data-table">
-              <thead><tr><th>Building / association</th><th>Properties</th><th className="text-right">Payable</th>
+              <thead><tr><th className="text-right">S.No</th><th>Building / association</th><th>Properties</th><th className="text-right">Payable</th>
                 <th className="text-right">Paid</th><th className="text-right">Credits</th>
                 <th className="text-right">Balance</th></tr></thead>
               <tbody>
-                {stmt.buildings.map((b) => (
+                {stmt.buildings.map((b, i) => (
                   <tr key={b.key} data-testid={`settlement-row-${b.building}`}>
+                    <td className="num text-slate-500">{i + 1}</td>
                     <td className="font-semibold">{b.building}</td>
                     <td className="text-slate-500 text-xs">
                       {b.units.map((u) => `${u.name} (${money(u.maintenance_payable + u.adhoc_payable)})`).join(", ") || "—"}
@@ -192,12 +193,13 @@ export default function Payouts() {
                                  hint="Record what you pay the building, and any bill you paid on their behalf as a credit." /> : (
             <div className="overflow-x-auto">
               <table className="data-table">
-                <thead><tr><th>Date</th><th>Building</th><th>Property</th><th>Category</th>
+                <thead><tr><th className="text-right">S.No</th><th>Date</th><th>Building</th><th>Property</th><th>Category</th>
                   <th className="text-right">Amount</th><th>Mode</th><th>Reference</th><th>Type</th><th>Bill</th><th /></tr></thead>
                 <tbody>
-                  {rows.map((p) => (
+                  {rows.map((p, i) => (
                     <tr key={p.id} data-testid={`payout-row-${p.id}`}>
-                      <td>{p.date}</td>
+                      <td className="num text-slate-500">{i + 1}</td>
+                      <td>{dmy(p.date)}</td>
                       <td className="font-semibold">{buildingLabel(p)}</td>
                       <td className="text-slate-500">{p.unit_id ? unitName(p.unit_id) : "—"}</td>
                       <td>{p.category}{p.note ? <span className="text-slate-400"> · {p.note}</span> : ""}</td>

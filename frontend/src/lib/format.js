@@ -12,11 +12,21 @@ export const litres = (n) =>
 export const num = (n, d = 2) =>
   Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: d, maximumFractionDigits: d });
 
+// Every date shown anywhere in SocietyHub is DD-MM-YYYY.
+export const dmy = (d) => {
+  if (!d) return "—";
+  const s = String(d).slice(0, 10);
+  const [y, m, dd] = s.split("-");
+  return y && m && dd ? `${dd}-${m}-${y}` : s;
+};
+
 export const monthLabel = (m) => {
   if (!m) return "";
   const [y, mm] = m.split("-");
   return new Date(Number(y), Number(mm) - 1, 1).toLocaleString("en-IN", { month: "long", year: "numeric" });
 };
+
+export const FLOORS = ["Ground", "First", "Second", "Third", "Fourth", "Fifth"];
 
 export const CHARGE_TYPES = [
   { value: "cleaning", label: "Cleaning / Maid", person: true },

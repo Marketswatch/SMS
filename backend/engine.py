@@ -18,6 +18,7 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
     """
     n = len(flats) or 1
     flat_ids = [f["id"] for f in flats]
+    flat_by_id = {f["id"]: f for f in flats}
 
     # --- water purchased ---
     total_litres = sum(float(t.get("qty_sump", 0)) + float(t.get("qty_syntex", 0)) for t in tankers)
@@ -54,10 +55,16 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
             closing = None
         if m.get("flat_id") in consumption_by_flat:
             consumption_by_flat[m["flat_id"]] += cons
+        holder = flat_by_id.get(m.get("flat_id"), {})
         meter_rows.append({
             "meter_id": m["id"], "label": m.get("label"), "flat_id": m.get("flat_id"),
+            "flat_number": holder.get("number", ""), "floor": holder.get("floor", ""),
+            "owner_name": holder.get("owner_name", ""),
             "opening": opening, "closing": closing, "consumption": cons, "flagged": flagged,
         })
+
+    for mr in meter_rows:
+        mr["charge"] = r2(mr["consumption"] * avg_cost)
 
     total_consumed = sum(consumption_by_flat.values())
     reserve_litres = total_litres - total_consumed
@@ -106,6 +113,7 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
     received_by_tenant = {fid: 0.0 for fid in flat_ids}
     received_by_owner = {fid: 0.0 for fid in flat_ids}
     payouts = {fid: 0.0 for fid in flat_ids}
+    last_paid_on = {fid: "" for fid in flat_ids}
     for p in payments:
         fid = p.get("flat_id")
         if fid not in received:
@@ -115,6 +123,9 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
             payouts[fid] += amt
         else:
             received[fid] += amt
+            d = str(p.get("date") or "")
+            if d > last_paid_on[fid]:
+                last_paid_on[fid] = d
             if p.get("payer_type") == "tenant":
                 received_by_tenant[fid] += amt
             else:
@@ -132,6 +143,7 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
         rows.append({
             "flat_id": fid,
             "flat_number": f.get("number"),
+            "floor": f.get("floor", ""),
             "owner_name": f.get("owner_name"),
             "owner_phone": f.get("owner_phone", ""),
             "tenant_name": f.get("tenant_name"),
@@ -152,10 +164,14 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
             "payouts": r2(payouts[fid]),
             "net": r2(net),
             "status": "owes" if r2(net) > 0 else ("owed" if r2(net) < 0 else "settled"),
+            "last_paid_on": last_paid_on[fid],
+            "payment_status": "paid" if r2(net) <= 0.005 else ("partial" if received[fid] > 0 else "pending"),
         })
 
     totals = {
         "flat_count": len(flats),
+        "tanker_count": len(tankers),
+        "metered_charges": r2(total_consumed * avg_cost),
         "total_litres": r2(total_litres),
         "total_water_spend": r2(total_spend),
         "total_tips": r2(total_tips),

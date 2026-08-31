@@ -5,7 +5,7 @@ import uuid
 import logging
 from pathlib import Path
 from datetime import datetime, timezone, date
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Literal
 
 from dotenv import load_dotenv
 
@@ -220,9 +220,29 @@ async def delete_property(pid: str, user: dict = Depends(admin_user)):
 
 
 # ---------------------------------------------------------------- flats
+def dmy(d) -> str:
+    """DD-MM-YYYY for every date shown in an export or receipt."""
+    s = str(d or "")[:10]
+    parts = s.split("-")
+    return f"{parts[2]}-{parts[1]}-{parts[0]}" if len(parts) == 3 else (s or "—")
+
+
+def mon_label(m: str) -> str:
+    parts = str(m or "").split("-")
+    if len(parts) < 2:
+        return str(m or "")
+    names = ["January", "February", "March", "April", "May", "June",
+             "July", "August", "September", "October", "November", "December"]
+    try:
+        return f"{names[int(parts[1]) - 1]} {parts[0]}"
+    except (ValueError, IndexError):
+        return str(m)
+
+
 class FlatIn(BaseModel):
     property_id: str
     number: str
+    floor: str = ""
     owner_name: str
     owner_user_id: Optional[str] = None
     owner_phone: str = ""
@@ -546,8 +566,8 @@ class PaymentIn(BaseModel):
     flat_id: str
     amount: float
     date: str
-    payer_type: str = "owner"
-    direction: str = "received"
+    payer_type: Literal["owner", "tenant"] = "owner"
+    direction: Literal["received", "payout"] = "received"
     notes: str = ""
 
 
@@ -686,11 +706,13 @@ async def annual_export(property_id: str, year: int, format: str = Query("csv"),
                         user: dict = Depends(admin_user)):
     data = await annual_statement(property_id, year, user)
     t = data["totals"]
-    head = ["Flat", "Owner", "Consumption L", "Water cost", "Recurring", "Maintenance",
+    head = ["S.No", "Flat", "Owner", "Consumption L", "Water cost", "Recurring", "Maintenance",
             "Total billed", "Fronted", "Paid", "Payouts", "Closing balance"]
+    counter = {"n": 0}
 
     def vals(r):
-        return [r["flat_number"], r["owner_name"], r["consumption"], r["water_cost"], r["recurring"],
+        counter["n"] += 1
+        return [counter["n"], r["flat_number"], r["owner_name"], r["consumption"], r["water_cost"], r["recurring"],
                 r["maintenance"], r["billable"], r["contributions"], r["received"], r["payouts"],
                 r["closing_balance"]]
 
@@ -708,9 +730,9 @@ async def annual_export(property_id: str, year: int, format: str = Query("csv"),
         for r in data["rows"]:
             w.writerow(vals(r))
         w.writerow([])
-        w.writerow(["Month", "Litres", "Water spend", "Avg /L", "Recurring", "Maintenance", "Billed", "Collected"])
-        for m in data["months"]:
-            w.writerow([m["month"], m["litres"], m["water_spend"], m["avg_cost_per_litre"],
+        w.writerow(["S.No", "Month", "Litres", "Water spend", "Avg /L", "Recurring", "Maintenance", "Billed", "Collected"])
+        for i, m in enumerate(data["months"], start=1):
+            w.writerow([i, mon_label(m["month"]), m["litres"], m["water_spend"], m["avg_cost_per_litre"],
                         m["recurring_total"], m["maintenance_total"], m["billable_total"], m["received"]])
         out = buf.getvalue().encode("utf-8")
         return StreamingResponse(io.BytesIO(out), media_type="text/csv",
@@ -733,10 +755,10 @@ async def annual_export(property_id: str, year: int, format: str = Query("csv"),
                              ("FONTSIZE", (0, 0), (-1, -1), 7),
                              ("ALIGN", (2, 1), (-1, -1), "RIGHT")]))
     story += [tbl, Spacer(1, 16), Paragraph("Month by month", styles["Heading3"])]
-    mh = ["Month", "Litres", "Water spend", "Avg /L", "Recurring", "Maintenance", "Billed", "Collected"]
-    mt = Table([mh] + [[m["month"], m["litres"], m["water_spend"], m["avg_cost_per_litre"],
+    mh = ["S.No", "Month", "Litres", "Water spend", "Avg /L", "Recurring", "Maintenance", "Billed", "Collected"]
+    mt = Table([mh] + [[i, mon_label(m["month"]), m["litres"], m["water_spend"], m["avg_cost_per_litre"],
                         m["recurring_total"], m["maintenance_total"], m["billable_total"], m["received"]]
-                       for m in data["months"]], repeatRows=1)
+                       for i, m in enumerate(data["months"], start=1)], repeatRows=1)
     mt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
                             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
                             ("FONTSIZE", (0, 0), (-1, -1), 7),
@@ -830,10 +852,23 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
                      user: dict = Depends(admin_user)):
     stmt = await build_statement(property_id, month)
     t = stmt["totals"]
+
+    def owner_label(r):
+        return f"{r['owner_name']} ({r['tenant_name']} — tenant)" if r.get("tenant_name") else r["owner_name"]
+
+    def pay_label(r):
+        if r.get("payment_status") == "paid":
+            return "Paid" if r.get("last_paid_on") else "Settled"
+        return "Partial" if r.get("payment_status") == "partial" else "Pending"
+
+    combined = {}
+    for m in stmt["meters"]:
+        combined[m.get("flat_id")] = round(combined.get(m.get("flat_id"), 0) + float(m.get("charge") or 0), 2)
+
     if format == "csv":
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow([f"SocietyHub MIS — {stmt['property']['name']} — {month}"])
+        w.writerow([f"SocietyHub MIS — {stmt['property']['name']} — {mon_label(month)}"])
         w.writerow([])
         w.writerow(["Water purchased (L)", t["total_litres"], "Water spend (lorry+tips)", t["total_water_spend"],
                     "Avg cost/L", t["avg_cost_per_litre"], "of which tips", t["total_tips"]])
@@ -841,14 +876,37 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
                     "Reserve value", t["reserve_value"]])
         w.writerow(["Recurring total", t["recurring_total"], "Maintenance total", t["maintenance_total"]])
         w.writerow([])
-        w.writerow(["Flat", "Owner", "Tenant", "Consumption L", "Water cost", "Reserve share",
-                    "Recurring share", "Maintenance share", "Base cost", "Contributions",
-                    "Carry-in", "Paid by tenant", "Paid by owner", "Payouts", "Net", "Status"])
-        for r in stmt["rows"]:
-            w.writerow([r["flat_number"], r["owner_name"], r["tenant_name"], r["consumption"],
-                        r["water_own_cost"], r["reserve_share"], r["recurring_share"],
-                        r["maintenance_share"], r["base_cost"], r["contributions"], r["carry_in"],
-                        r["received_by_tenant"], r["received_by_owner"], r["payouts"], r["net"], r["status"]])
+        w.writerow(["Water reconciliation — owner statement"])
+        w.writerow(["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered cost (reserve)",
+                    "Total water cost", "Misc", "Total amount", "Bal brought forward",
+                    "Advance paid (fronting)", "Amount paid", "Balance to pay / receive",
+                    "Date of payment", "Status"])
+        for i, r in enumerate(stmt["rows"], start=1):
+            w.writerow([i, r["flat_number"], r.get("floor", ""), owner_label(r),
+                        r["water_own_cost"], r["reserve_share"], r["water_cost"],
+                        round(r["recurring_share"] + r["maintenance_share"], 2), r["base_cost"],
+                        r["carry_in"], r["contributions"], r["received"], r["net"],
+                        dmy(r.get("last_paid_on")), pay_label(r)])
+        w.writerow(["", "", "", "TOTAL", round(t["total_water_spend"] - t["reserve_value"], 2), t["reserve_value"],
+                    t["total_water_spend"], round(t["recurring_total"] + t["maintenance_total"], 2),
+                    t["billable_total"], t["total_carry_in"], t["total_contributions"], t["total_received"],
+                    t["net_position"], "", ""])
+        w.writerow([])
+        w.writerow(["Total Expense", t["billable_total"], "Split between", t["flat_count"],
+                    "Exp per head", round(t["billable_total"] / (t["flat_count"] or 1), 2)])
+        w.writerow([])
+        w.writerow(["Water usage charges — as per meter readings"])
+        w.writerow(["S.No", "House", "Floor", "Owner", "Meter number", "Starting unit", "Ending unit",
+                    "Consumed units", "Water charges", "Combined (per flat)"])
+        for i, m in enumerate(stmt["meters"], start=1):
+            w.writerow([i, m.get("flat_number", ""), m.get("floor", ""), m.get("owner_name", ""), m.get("label", ""),
+                        m.get("opening"), m.get("closing"), m.get("consumption"), m.get("charge"),
+                        combined.get(m.get("flat_id"), "")])
+        w.writerow(["Total lorries this month", t["tanker_count"], "Total water received (L)", t["total_litres"],
+                    "Total water cost", t["total_water_spend"], "Cost per litre", t["avg_cost_per_litre"]])
+        w.writerow(["Total units consumed (as per meter)", t["total_consumed"], "Total water charges (metered)",
+                    t["metered_charges"], "Total non-metered consumption", t["reserve_litres"],
+                    "Total non-metered cost", t["reserve_value"], "Per house share", t["reserve_share"]])
         w.writerow([])
         w.writerow(["TOTAL OWES", t["total_owes"], "TOTAL OWED", t["total_owed"], "NET", t["net_position"]])
         data = buf.getvalue().encode("utf-8")
@@ -864,7 +922,7 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
     doc = SimpleDocTemplate(out, pagesize=landscape(A4), title=f"MIS {month}")
     styles = getSampleStyleSheet()
     story = [Paragraph(f"SocietyHub MIS — {stmt['property']['name']}", styles["Title"]),
-             Paragraph(f"Period: {month} &nbsp;&nbsp; Status: {stmt['status']}", styles["Normal"]),
+             Paragraph(f"Period: {mon_label(month)} &nbsp;&nbsp; Status: {stmt['status']}", styles["Normal"]),
              Spacer(1, 10)]
     summary = [["Water purchased (L)", t["total_litres"], "Water spend (lorry + tips)", t["total_water_spend"],
                 "Avg cost / L", t["avg_cost_per_litre"]],
@@ -876,29 +934,63 @@ async def mis_export(property_id: str, month: str, format: str = Query("csv"),
     st.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
                             ("FONTSIZE", (0, 0), (-1, -1), 8),
                             ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke)]))
-    story += [st, Spacer(1, 14)]
+    story += [st, Spacer(1, 14), Paragraph("Water reconciliation — owner statement", styles["Heading3"])]
 
-    head = ["Flat", "Owner", "Tenant", "Cons L", "Water", "Reserve", "Recurring",
-            "Maint.", "Base", "Contrib.", "Carry", "Tenant paid", "Owner paid", "Payout", "Net", "Status"]
+    head = ["S.No", "Flat No.", "Floor", "Owner", "Metered cost", "Non-metered\ncost (reserve)",
+            "Total water\ncost", "Misc", "Total\namount", "Bal brought\nforward",
+            "Advance paid\n(fronting)", "Amount\npaid", "Balance to\npay / receive", "Date of\npayment", "Status"]
     rows = [head]
-    for r in stmt["rows"]:
-        rows.append([r["flat_number"], r["owner_name"], r["tenant_name"], r["consumption"],
-                     r["water_own_cost"], r["reserve_share"], r["recurring_share"], r["maintenance_share"],
-                     r["base_cost"], r["contributions"], r["carry_in"], r["received_by_tenant"],
-                     r["received_by_owner"], r["payouts"], r["net"], r["status"].upper()])
+    for i, r in enumerate(stmt["rows"], start=1):
+        rows.append([i, r["flat_number"], r.get("floor", "") or "—", owner_label(r),
+                     r["water_own_cost"], r["reserve_share"], r["water_cost"],
+                     round(r["recurring_share"] + r["maintenance_share"], 2), r["base_cost"],
+                     r["carry_in"], r["contributions"], r["received"], r["net"],
+                     dmy(r.get("last_paid_on")), pay_label(r)])
+    rows.append(["", "", "", "TOTAL", round(t["total_water_spend"] - t["reserve_value"], 2), t["reserve_value"],
+                 t["total_water_spend"], round(t["recurring_total"] + t["maintenance_total"], 2),
+                 t["billable_total"], t["total_carry_in"], t["total_contributions"], t["total_received"],
+                 t["net_position"], "", ""])
     tbl = Table(rows, repeatRows=1)
     style = [("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
              ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0F172A")),
              ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+             ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#E2E8F0")),
              ("FONTSIZE", (0, 0), (-1, -1), 7),
-             ("ALIGN", (3, 1), (-1, -1), "RIGHT")]
+             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+             ("ALIGN", (4, 1), (-3, -1), "RIGHT")]
     for i, r in enumerate(stmt["rows"], start=1):
         if r["net"] > 0:
-            style.append(("TEXTCOLOR", (-2, i), (-1, i), colors.HexColor("#DC2626")))
+            style.append(("TEXTCOLOR", (-3, i), (-1, i), colors.HexColor("#DC2626")))
         elif r["net"] < 0:
-            style.append(("TEXTCOLOR", (-2, i), (-1, i), colors.HexColor("#16A34A")))
+            style.append(("TEXTCOLOR", (-3, i), (-1, i), colors.HexColor("#16A34A")))
     tbl.setStyle(TableStyle(style))
-    story += [tbl, Spacer(1, 12),
+    story += [tbl, Spacer(1, 8),
+              Paragraph(f"Total Expense: {t['billable_total']} &nbsp;|&nbsp; Split between {t['flat_count']} houses "
+                        f"&nbsp;|&nbsp; Exp per head: {round(t['billable_total'] / (t['flat_count'] or 1), 2)}",
+                        styles["Normal"]),
+              Spacer(1, 16), Paragraph("Water usage charges — as per meter readings", styles["Heading3"])]
+
+    whead = ["S.No", "House", "Floor", "Owner", "Meter number", "Starting unit", "Ending unit",
+             "Consumed units", "Water charges", "Combined\n(per flat)"]
+    wrows = [whead] + [[i, m.get("flat_number", ""), m.get("floor", "") or "—", m.get("owner_name", ""),
+                        m.get("label", ""), m.get("opening"), m.get("closing"), m.get("consumption"),
+                        m.get("charge"), combined.get(m.get("flat_id"), "")]
+                       for i, m in enumerate(stmt["meters"], start=1)]
+    wt = Table(wrows, repeatRows=1, hAlign="LEFT")
+    wt.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E2E8F0")),
+                            ("FONTSIZE", (0, 0), (-1, -1), 7),
+                            ("ALIGN", (5, 1), (-1, -1), "RIGHT")]))
+    legend = Table([["Total lorries this month", t["tanker_count"], "Total water received (L)", t["total_litres"]],
+                    ["Total water cost (lorry + tips)", t["total_water_spend"], "Cost per litre", t["avg_cost_per_litre"]],
+                    ["Total units consumed (as per meter)", t["total_consumed"], "Total water charges (metered)", t["metered_charges"]],
+                    ["Total non-metered consumption (L)", t["reserve_litres"], "Total non-metered cost", t["reserve_value"]],
+                    [f"Non-metered cost split between {t['flat_count']} houses — per house share", t["reserve_share"], "", ""]],
+                   hAlign="LEFT")
+    legend.setStyle(TableStyle([("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
+                                ("FONTSIZE", (0, 0), (-1, -1), 8),
+                                ("BACKGROUND", (0, 0), (0, -1), colors.whitesmoke)]))
+    story += [wt, Spacer(1, 10), legend, Spacer(1, 12),
               Paragraph(f"Total receivable (owes): {t['total_owes']} &nbsp;|&nbsp; Total payable (owed): {t['total_owed']} &nbsp;|&nbsp; Net: {t['net_position']}", styles["Normal"])]
     doc.build(story)
     out.seek(0)

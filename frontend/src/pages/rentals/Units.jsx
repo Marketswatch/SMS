@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { money } from "@/lib/format";
+import { money, dmy } from "@/lib/format";
 
 const blank = {
   name: "", kind: "flat", address: "", ownership: "own", owner_name: "", building_property_id: "", building_name: "",
@@ -242,13 +242,14 @@ export default function Units() {
           {!units.length ? <Empty testId="units-empty" title="No properties yet" hint="Add your first rental unit on the left." /> : (
             <div className="overflow-x-auto">
               <table className="data-table">
-                  <thead><tr><th>Name</th><th>Type</th><th>Ownership</th><th>Tenant</th>
+                  <thead><tr><th className="text-right">S.No</th><th>Name</th><th>Type</th><th>Ownership</th><th>Tenant</th>
                     <th className="text-right">Rent</th><th className="text-right">Maint.</th>
                     <th className="text-right">Deposit</th>
                     <th>Lease</th><th>Status</th><th /></tr></thead>
                 <tbody>
-                  {units.map((u) => (
+                  {units.map((u, i) => (
                     <tr key={u.id} data-testid={`unit-row-${u.name}`}>
+                      <td className="num text-slate-500">{i + 1}</td>
                       <td className="font-semibold">{u.name}</td>
                       <td className="capitalize text-slate-500">{u.kind}</td>
                       <td>{u.ownership === "own" ? "Own" : `Managed · ${u.owner_name || "—"}`}</td>
@@ -256,12 +257,12 @@ export default function Units() {
                       <td className="num">{money(u.rent_amount)}</td>
                       <td className="num">{money(u.maintenance_amount)}</td>
                       <td className="num">{money(u.deposit_amount)}</td>
-                      <td className="text-slate-500 text-xs">{u.lease_start || "—"} → {u.lease_end || "—"}
+                      <td className="text-slate-500 text-xs">{dmy(u.lease_start)} → {dmy(u.lease_end)}
                         {u.lease_months ? <span className="text-slate-400"> ({u.lease_months}m)</span> : null}</td>
                       <td className="capitalize">{u.status}
                         {u.status === "vacant" && u.vacant_since && (
                           <div className="text-[11px] text-slate-500 mono normal-case"
-                               data-testid={`unit-vacant-since-${u.name}`}>since {u.vacant_since}</div>
+                               data-testid={`unit-vacant-since-${u.name}`}>since {dmy(u.vacant_since)}</div>
                         )}
                       </td>
                       <td className="text-right">
