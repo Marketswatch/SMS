@@ -38,37 +38,64 @@ export default function MIS() {
     } catch (e) { toast.error(errMsg(e)); } finally { setBusy(""); }
   };
 
+  const packBlob = async (report, format) => {
+    const res = await api.get("/reports/pack", {
+      params: { property_id: propertyId, month, report, format }, responseType: "blob",
+    });
+    return res.data;
+  };
+
   const downloadPack = async (report, format) => {
     setBusy(`${report}-${format}`);
     try {
-      const res = await api.get("/reports/pack", {
-        params: { property_id: propertyId, month, report, format }, responseType: "blob",
-      });
-      const url = URL.createObjectURL(res.data);
+      const blob = await packBlob(report, format);
+      const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `${report === "all" ? "month-end-pack" : report}-${month}.${format}`;
       a.click();
       URL.revokeObjectURL(url);
-      toast.success(format === "zip" ? "Pack downloaded" : `${report === "all" ? "Pack" : "Report"} ${format.toUpperCase()} downloaded`);
+      toast.success(format === "zip" ? "Pack downloaded" : `${format.toUpperCase()} downloaded`);
     } catch (e) { toast.error(errMsg(e)); } finally { setBusy(""); }
   };
 
-  const shareOnWhatsApp = async () => {
-    await downloadPack("all", "zip");
+  const caption = (report) => {
     const t2 = statement?.totals;
-    const msg = [
-      `*${statement?.property?.name || "Building"} — month-end report pack*`,
-      monthLabel(month),
-      "",
+    const title = report === "all" ? "month-end report pack"
+      : { meters: "water usage charges as per meter readings", purchases: "water purchases for the month",
+          recurring: "recurring entries report", reconciliation: "water reconciliation statement" }[report];
+    return [
+      `*${statement?.property?.name || "Building"} — ${title}*`,
+      monthLabel(month), "",
       `Water purchased: ${num(t2?.total_litres, 0)} L · ${money(t2?.total_water_spend)}`,
-      `Recurring: ${money(t2?.recurring_total)} · Repairs: ${money(t2?.maintenance_total)}`,
       `Total billed: ${money(t2?.billable_total)} · Per house: ${money((t2?.billable_total || 0) / (t2?.flat_count || 1))}`,
-      "",
-      "Reports attached: water usage as per meter readings, water purchases, recurring entries and the owner reconciliation statement.",
     ].join("\n");
-    window.open(`https://wa.me/?text=${encodeURIComponent(msg)}`, "_blank", "noopener");
-    toast.info("Files downloaded — attach them in the WhatsApp window that just opened");
+  };
+
+  // On phone/tablet the file goes straight into the WhatsApp share sheet; on desktop
+  // WhatsApp Web cannot accept a file from a website, so we download it and open the chat.
+  const sharePack = async (report) => {
+    setBusy(`${report}-share`);
+    try {
+      const blob = await packBlob(report, "png");
+      const file = new File([blob], `${report}-${month}.png`, { type: "image/png" });
+      const text = caption(report);
+      if (navigator.canShare?.({ files: [file] })) {
+        await navigator.share({ files: [file], text });
+        toast.success("Shared");
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = file.name;
+        a.click();
+        URL.revokeObjectURL(url);
+        window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank", "noopener");
+        toast.info("Image downloaded — attach it in the WhatsApp window that just opened");
+      }
+    } catch (e) {
+      if (e?.name !== "AbortError") toast.error(errMsg(e));
+    } finally { setBusy(""); }
   };
 
   const t = statement?.totals;
@@ -102,7 +129,19 @@ export default function MIS() {
         )}
       </Card>
 
-      <WaterUsageReport statement={statement} month={month} />
+      <WaterUsageReport statement={statement} month={month}
+        actions={
+          <>
+            <button onClick={() => downloadPack("meters", "pdf")} disabled={!!busy}
+                    data-testid="usage-pdf-btn"
+                    className="px-3 py-1.5 text-xs border border-slate-300 rounded hover:bg-slate-100">PDF</button>
+            <button onClick={() => sharePack("meters")} disabled={!!busy}
+                    data-testid="usage-whatsapp-btn"
+                    className="px-3 py-1.5 text-xs border border-emerald-300 text-emerald-700 rounded hover:bg-emerald-50">
+              Share on WhatsApp
+            </button>
+          </>
+        } />
 
       <Card title="Month-end owner pack" testId="report-pack-card" className="mb-8">
         <p className="text-sm text-slate-600 mb-4">
@@ -119,8 +158,8 @@ export default function MIS() {
             <FileDown className="w-4 h-4 mr-2" /> Zip — every report as PDF + image
           </Button>
           <Button variant="outline" disabled={!!busy} data-testid="pack-whatsapp-btn"
-                  onClick={shareOnWhatsApp}>
-            <MessageCircle className="w-4 h-4 mr-2 text-emerald-700" /> Share on WhatsApp
+                  onClick={() => sharePack("all")}>
+            <MessageCircle className="w-4 h-4 mr-2 text-emerald-700" /> Share pack on WhatsApp
           </Button>
         </div>
         <div className="grid sm:grid-cols-2 gap-3">
@@ -134,6 +173,11 @@ export default function MIS() {
                 <button onClick={() => downloadPack(key, "png")} disabled={!!busy}
                         data-testid={`pack-${key}-png-btn`} title="Download image for WhatsApp"
                         className="px-2.5 py-1.5 text-xs border border-slate-300 rounded hover:bg-slate-100">Image</button>
+                <button onClick={() => sharePack(key)} disabled={!!busy}
+                        data-testid={`pack-${key}-whatsapp-btn`} title="Share this report on WhatsApp"
+                        className="px-2.5 py-1.5 text-xs border border-emerald-300 text-emerald-700 rounded hover:bg-emerald-50">
+                  WhatsApp
+                </button>
               </div>
             </div>
           ))}

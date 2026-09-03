@@ -23,8 +23,8 @@ export default function Charges() {
   const [tick, setTick] = useState(0);
   const { statement } = useStatement(propertyId, month, tick);
 
-  const [rec, setRec] = useState({ charge_type: "cleaning", person_name: "", amount: "", payer_flat_id: "", payer_type: "tenant", description: "", date: `${month}-01` });
-  const [job, setJob] = useState({ description: "", amount: "", payer_flat_id: "", payer_type: "owner", date: `${month}-01` });
+  const [rec, setRec] = useState({ charge_type: "cleaning", person_name: "", amount: "", payer_flat_id: "", payer_type: "tenant", description: "", date: `${month}-01`, billed_flat_id: "" });
+  const [job, setJob] = useState({ description: "", amount: "", payer_flat_id: "", payer_type: "owner", date: `${month}-01`, billed_flat_id: "" });
   const [jobMedia, setJobMedia] = useState([]);
   const [recMedia, setRecMedia] = useState([]);
   const [editId, setEditId] = useState(null);
@@ -61,11 +61,13 @@ export default function Charges() {
     if (c.category === "adhoc") {
       setJob({ description: c.description || "", amount: String(c.amount ?? ""),
                payer_flat_id: c.payer_flat_id || "", payer_type: c.payer_type || "owner",
+               billed_flat_id: c.billed_flat_id || "",
                date: c.date || `${month}-01` });
       setJobMedia(c.media || []);
     } else {
       setRec({ charge_type: c.charge_type, person_name: c.person_name || "",
                amount: String(c.amount ?? ""), payer_flat_id: c.payer_flat_id || "",
+               billed_flat_id: c.billed_flat_id || "",
                payer_type: c.payer_type || "owner", description: c.description || "",
                date: c.date || `${month}-01` });
       setRecMedia(c.media || []);
@@ -129,7 +131,14 @@ export default function Charges() {
             <tr key={c.id} data-testid={`${testId}-row-${c.id}`}>
               <td className="num text-slate-500">{i + 1}</td>
               <td className="capitalize font-semibold">{c.charge_type}</td>
-              <td>{c.description || "—"}</td>
+              <td>{c.description || "—"}
+                {c.billed_flat_id && (
+                  <span className="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-amber-50 text-amber-800 border border-amber-200"
+                        data-testid={`charge-flatonly-${c.id}`}>
+                    only {flatName(c.billed_flat_id)}
+                  </span>
+                )}
+              </td>
               <td className="text-slate-500">{c.person_name || "—"}</td>
               <td className="num">{money(c.amount)}</td>
               <td>{flatName(c.payer_flat_id)}</td>
@@ -205,6 +214,7 @@ export default function Charges() {
                     charge_type: rec.charge_type, person_name: rec.person_name,
                     amount: Number(rec.amount || 0), payer_flat_id: rec.payer_flat_id || null,
                     payer_type: rec.payer_type, description: rec.description, date: rec.date, media: recMedia,
+                    billed_flat_id: rec.billed_flat_id || null,
                   }, () => { setRec({ ...rec, person_name: "", amount: "", description: "" }); setRecMedia([]); });
                 }}>
                   <div>
@@ -247,6 +257,22 @@ export default function Charges() {
                     </div>
                   </div>
                   <div>
+                    <Label className="label-caps">Charge to one flat only</Label>
+                    <Select value={rec.billed_flat_id || "split"}
+                            onValueChange={(v) => setRec({ ...rec, billed_flat_id: v === "split" ? "" : v })}>
+                      <SelectTrigger className="mt-2 h-11" data-testid="recurring-billed-select"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="split">Split between all flats</SelectItem>
+                        {flats.map((f) => <SelectItem key={f.id} value={f.id}>Only {f.number} — {f.owner_name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Pick a flat to charge the full amount to that flat alone — it lands in its
+                      Flat-specific column and its owner's total.
+                    </p>
+                  </div>
+
+                  <div>
                     <Label className="label-caps">Date</Label>
                     <Input type="date" className="mt-2 h-11" data-testid="recurring-date-input"
                            value={rec.date} onChange={(e) => setRec({ ...rec, date: e.target.value })} />
@@ -282,6 +308,7 @@ export default function Charges() {
                     charge_type: "maintenance", description: job.description, person_name: "",
                     amount: Number(job.amount || 0), payer_flat_id: job.payer_flat_id || null,
                     payer_type: job.payer_type, date: job.date, media: jobMedia,
+                    billed_flat_id: job.billed_flat_id || null,
                   }, () => { setJob({ ...job, description: "", amount: "" }); setJobMedia([]); });
                 }}>
                   <div>
@@ -311,6 +338,22 @@ export default function Charges() {
                       </Select>
                     </div>
                   </div>
+                  <div>
+                    <Label className="label-caps">Charge to one flat only</Label>
+                    <Select value={job.billed_flat_id || "split"}
+                            onValueChange={(v) => setJob({ ...job, billed_flat_id: v === "split" ? "" : v })}>
+                      <SelectTrigger className="mt-2 h-11" data-testid="adhoc-billed-select"><SelectValue /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="split">Split between all flats</SelectItem>
+                        {flats.map((f) => <SelectItem key={f.id} value={f.id}>Only {f.number} — {f.owner_name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-slate-500 mt-1">
+                      Charging one flat only? Pick it here — the full amount goes to that flat's
+                      Flat-specific column instead of being split.
+                    </p>
+                  </div>
+
                   <div>
                     <Label className="label-caps">Date</Label>
                     <Input type="date" className="mt-2 h-11" data-testid="adhoc-date-input"

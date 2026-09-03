@@ -1,0 +1,51 @@
+{
+  "summary": "Iteration 15 full-stack test of the pay-back flow, flat-specific charges, grouped readings entry, grouped water-usage report, per-report WhatsApp sharing, centred report headings and negative opening balance. Backend: new pytest suite /app/backend/tests/test_iter15.py — 20/20 passed (payment mode/reference validation incl. payout, part-then-full pay back status transition Prepaid -> Excess Paid Back, flat-only charge maths for one-time AND recurring incl. CSV/XLSX/PDF columns, readings sorted floor->flat->meter + re-editability + statement recompute, grouped meters with combined total, centred two-line headings with no 'sorted by' text, 1 page per report / cover+4 for the pack, png+zip, negative opening balance, light regression). Frontend (Playwright, desktop 1920): pay-back button only on credit rows (101, 201), dialog prefilled with the exact credit, mode select + conditional reference (backend 400 surfaced as toast), part payment keeps Prepaid and shrinks credit, remainder flips to 'Excess Paid Back', ledger shows Mode/Reference and DD-MM-YYYY; readings entry grouped Ground->First->Third with flat bands, typing lands on the correct meter (incl. after clicking a sort heading), values persist and remain re-editable; water usage report heading centred with 'For the month of August 2026', flat 101's two meters grouped under one block with a single combined Total Amount (rowspan=2); every per-report WhatsApp button (usage, meters, purchases, recurring, reconciliation, pack) downloads the correct report image and opens a WhatsApp compose window with a report-specific caption; PDF/Image/Zip/Excel/CSV downloads all work; flat-only selects default to 'Split between all flats', a 3000 one-time charge billed to 102 shows only in 102's Flat-specific cell (shared Misc share unchanged for every flat) with the 'only 102' badge; negative opening dues of -2,000 show as -₹2,000.00 Bal brought forward and move the net toward credit (-4,800 -> -6,800). All Sunrise Residency data was restored to the exact baseline after testing.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/mis/export?format=csv", "issue": "CSV reconciliation header reads 'Total water cost' while the screen, Excel and PDF all use 'Total Water cost' — cosmetic inconsistency between export formats (server.py line ~1131)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MIS.jsx (Month-end owner pack card)", "issue": "Requirement 5 (remove 'sorted by floor/flat' notes) is not fully done — the pack card still reads 'the four owner reports, each sorted by floor then flat number' (MIS.jsx line 148). PDFs are clean.", "selector": "[data-testid=\"report-pack-card\"]", "priority": "LOW"},
+      {"component": "Setup.jsx (Flats table)", "issue": "Opening / outstanding dues can only be entered when ADDING a flat; the flats table cell (flat-dues-<no>) is read-only, so a negative opening balance cannot be set for an existing flat from the UI at all. Had to use PUT /api/flats to test it.", "selector": "[data-testid=\"flat-dues-202\"]", "priority": "MEDIUM"},
+      {"component": "WaterUsageReport.jsx", "issue": "When a non-floor column heading is used for sorting, rows are still first grouped by the flat's first appearance, so the chosen sort only applies loosely — sorting by e.g. 'Water charges' does not produce a globally sorted list.", "selector": "[data-testid=\"meters-sort-charge\"]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Charges / Water / Reconciliation forms", "issues": ["Dates use the browser-native <input type=date> picker rather than the shadcn Calendar component (pre-existing across the app)."]},
+      {"screen": "Rentals workspace (Rent Roll)", "issues": ["Leftover junk/test properties from earlier iterations are still seeded: 'QA Prop 817555', 'QA Prop 96e3ed', 'TEST_Carry f91e11', 'afdsfdasfdasfdas', 'srinithi' — clean up demo data."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter15.py",
+    "/app/test_reports/pytest/iter15.xml",
+    "/app/test_reports/pytest/iter15_regression.xml"
+  ],
+  "action_items": [
+    "Remove the 'each sorted by floor then flat number' sentence from the Month-end owner pack card (MIS.jsx line 148) to complete requirement 5.",
+    "Make opening/outstanding dues editable for an existing flat in the Building Setup flats table (needed for negative opening balances; currently API-only).",
+    "Align the CSV reconciliation header casing with the other exports ('Total Water cost').",
+    "Housekeeping: 18 assertions in the older suites (test_iter11_xlsx_export.py, test_iter12_fixes.py, test_iter13_booking_dues_pack.py::test_combined_pdf, test_iter14_water_charges.py::test_csv_group_band) now fail ONLY because they assert the removed 'Colour key' blocks and the old header names ('Metered cost', 'Total Water cost' in CSV) — these are stale specs, not product regressions (Excel/PDF re-verified manually: Flat-specific column present, per-flat fills present, no colour-key blocks). Update or retire those assertions.",
+    "Delete the leftover QA/TEST rental properties from the demo data."
+  ],
+  "critical_code_review_comments": [
+    "Two JSX whitespace-text-node-in-<tr> React errors were logging on every render of the Reconciliation and Charges tables (ReconTable.jsx line 133, Charges.jsx line 144). Fixed by me (formatting only) — console is now clean.",
+    "engine.compute_statement is correct for flat-only charges: shared_charges drives recurring_share/adhoc_share while flat_specific is added per flat, so the shared per-flat share is untouched (verified numerically for both a one-time and a recurring flat-only charge).",
+    "POST /api/payments enforces the non-cash reference for BOTH directions (received and payout) — verified.",
+    "Reconcile.jsx defines extraCell inline (react/no-unstable-nested-components lint error) — consider hoisting; not functionally breaking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter15.py",
+    "/app/frontend/src/components/ReconTable.jsx",
+    "/app/frontend/src/pages/Charges.jsx"
+  ],
+  "success_rate": {"backend": "100% (20/20 new iteration-15 tests)", "frontend": "95% (all iteration-15 flows pass; only the leftover 'sorted by' note and the non-editable opening-dues cell fall short of the spec)"},
+  "seed_data_creation": "Temporary only, all removed: meter 'QA-M101B' on flat 101 with a 300-unit reading (grouped water usage check), TEST_ payments/payouts, TEST_/QA flat-only charges of 3000 on flat 102, opening_dues -2000 on flat 202. Two seed payments (102 ₹2,000 20-08 'UPI' and 202 ₹1,000 21-08) were accidentally deleted during UI cleanup and were re-created identically; final verification confirms the baseline is exact: net_position -4,800.00, flat_specific_total 0, 3 received payments only, 4 meters, readings 5500/6100/7300/6700, flat 101 owner 'Ramesh Kumar', all opening_dues 0.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "admin@societyhub.com / admin123 (from /app/memory/test_credentials.md)",
+  "context_for_next_testing_agent": "Run the new suite with: cd /app/backend && python -m pytest tests/test_iter15.py -n 0 -v (all 20 pass). Sunrise Residency / August 2026 baseline: 4 flats (101 Ground Ramesh Kumar, 102 Ground Sunita Desai, 202 First Anil Joshi, 201 Third Vikram Nair), nets -10,747.99 / 3,625.67 / 2,422.99 / -100.67, 3 received payments, 4 meters. Flats 101 and 201 are the credit rows that show the Pay back button. NOT re-tested this iteration: month close & reset (destructive — it would lock August 2026 and destroy the reviewed dataset) and PDF per-flat colour coding (verified in iteration 14; Excel per-flat fills re-verified here). In the Reconciliation ledger, payments are sorted by DATE — do NOT delete 'the last row' assuming it is the one you just created.",
+  "rca_of_the_issue": "No functional defect found in the iteration-15 features. The iteration-14 readings bug did not reappear: Water.jsx updates state by meter_id (x.meter_id === r.meter_id) and GET/PUT /api/readings key on meter_id, so typed values stay on their own meter even after a sort-heading click, after saving and after re-editing. The 18 failures in the older suites are stale expectations: reports.py no longer emits '_legend' colour-key blocks (requirement 5/'no colour-key blocks') and xlsx.py/server.py renamed reconciliation headers and inserted the new 'Flat-specific' column, so index/label assertions written for iterations 11–14 no longer match the intended output."
+}

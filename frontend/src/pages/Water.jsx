@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { toast } from "sonner";
 import { Truck, Trash2, Save, AlertTriangle, Pencil, X } from "lucide-react";
 import { api, errMsg } from "@/lib/api";
@@ -349,10 +349,31 @@ export default function Water() {
                     <tbody>
                       {sortedReadings.map((r, idx) => {
                         const cons = r.closing !== null && r.closing !== "" ? Number(r.closing) - Number(r.opening) : null;
+                        const prev = sortedReadings[idx - 1];
+                        const newFlat = !prev || prev.flat_id !== r.flat_id;
+                        const newFloor = !prev || (prev.floor || "") !== (r.floor || "");
                         return (
+                          <React.Fragment key={r.meter_id}>
+                          {newFloor && (
+                            <tr key={`floor-${r.meter_id}`} className="bg-slate-100">
+                              <td colSpan={7} className="label-caps text-slate-600 py-1.5"
+                                  data-testid={`readings-floor-${r.floor || "none"}`}>
+                                {r.floor ? `${r.floor} floor` : "Floor not set"}
+                              </td>
+                            </tr>
+                          )}
+                          {newFlat && (
+                            <tr key={`flat-${r.meter_id}`} className="bg-slate-50">
+                              <td colSpan={7} className="font-semibold py-1.5 pl-6"
+                                  data-testid={`readings-flat-${r.flat_number || r.flat_id}`}>
+                                Flat {r.flat_number || "—"}
+                                <span className="text-slate-500 font-normal"> · {r.owner_name}</span>
+                              </td>
+                            </tr>
+                          )}
                           <tr key={r.meter_id} data-testid={`reading-row-${r.label}`}>
                             <td className="num text-slate-500">{idx + 1}</td>
-                            <td className="font-semibold">{r.label}</td>
+                            <td className="font-semibold pl-6">{r.label}</td>
                             <td><span className="text-slate-400">{property?.name} / </span>{flatName(r.flat_id)}</td>
                             <td className="text-right">
                               <Input type="number" inputMode="decimal" step="any" disabled={locked}
@@ -377,6 +398,7 @@ export default function Water() {
                               )}
                             </td>
                           </tr>
+                          </React.Fragment>
                         );
                       })}
                     </tbody>

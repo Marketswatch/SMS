@@ -26,6 +26,7 @@ const misc = (r) => Number(r.recurring_share || 0) + Number(r.maintenance_share 
 
 const ACCESSORS = {
   flat_number: (r) => r.flat_number,
+  flat_specific: (r) => r.flat_specific || 0,
   owner_name: (r) => r.owner_name,
   water_own_cost: (r) => r.water_own_cost,
   reserve_share: (r) => r.reserve_share,
@@ -59,7 +60,7 @@ export const ReconTable = ({ rows, totals, testPrefix, extraHead, extraCell }) =
             <th colSpan={4} />
             <th colSpan={3} className="text-center bg-slate-100 border-b border-slate-200"
                 data-testid={`${testPrefix}-group-water`}>Water Charges</th>
-            <th colSpan={extraHead ? 10 : 9} />
+            <th colSpan={extraHead ? 11 : 10} />
           </tr>
           <tr>
             <th className="text-right">S.No</th>
@@ -69,6 +70,7 @@ export const ReconTable = ({ rows, totals, testPrefix, extraHead, extraCell }) =
             {th("Metered", "water_own_cost", "right")}
             {th("Non-Metered (in storage)", "reserve_share", "right")}
             {th("Total Water cost", "water_cost", "right")}
+            {th("Flat-specific", "flat_specific", "right")}
             {th("Misc", "misc", "right")}
             {th("Total amount", "base_cost", "right")}
             {th("Bal brought forward", "carry_in", "right")}
@@ -91,6 +93,9 @@ export const ReconTable = ({ rows, totals, testPrefix, extraHead, extraCell }) =
               <td className="num">{money(r.water_own_cost)}</td>
               <td className="num">{money(r.reserve_share)}</td>
               <td className="num font-semibold">{money(r.water_cost)}</td>
+              <td className="num" data-testid={`${testPrefix}-flatspecific-${r.flat_number}`}>
+                {money(r.flat_specific || 0)}
+              </td>
               <td className="num">{money(misc(r))}</td>
               <td className="num font-semibold">{money(r.base_cost)}</td>
               <td className="num" data-testid={`${testPrefix}-carry-${r.flat_number}`}>
@@ -117,6 +122,7 @@ export const ReconTable = ({ rows, totals, testPrefix, extraHead, extraCell }) =
             <td className="num">{money((t.total_water_spend || 0) - (t.reserve_value || 0))}</td>
             <td className="num">{money(t.reserve_value)}</td>
             <td className="num">{money(t.total_water_spend)}</td>
+            <td className="num">{money(t.flat_specific_total)}</td>
             <td className="num">{money(miscTotal)}</td>
             <td className="num">{money(t.billable_total)}</td>
             <td className="num">{money(t.total_carry_in)}</td>

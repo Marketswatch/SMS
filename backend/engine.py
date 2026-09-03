@@ -114,12 +114,29 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
         })
 
     # --- charges split ---
+    # A charge with billed_flat_id belongs wholly to that flat and is not split.
+    shared_charges = [c for c in charges if not c.get("billed_flat_id")]
+    flat_only_charges = [c for c in charges if c.get("billed_flat_id")]
     recurring_items = [c for c in charges if c.get("charge_type") in RECURRING_TYPES]
     adhoc_items = [c for c in charges if c.get("charge_type") in ADHOC_TYPES]
-    recurring_total = sum(float(c.get("amount", 0)) for c in recurring_items)
-    adhoc_total = sum(float(c.get("amount", 0)) for c in adhoc_items)
+    recurring_total = sum(float(c.get("amount", 0)) for c in shared_charges
+                          if c.get("charge_type") in RECURRING_TYPES)
+    adhoc_total = sum(float(c.get("amount", 0)) for c in shared_charges
+                      if c.get("charge_type") in ADHOC_TYPES)
     recurring_share = recurring_total / n
     adhoc_share = adhoc_total / n
+
+    flat_specific = {fid: 0.0 for fid in flat_ids}
+    flat_specific_detail = {fid: [] for fid in flat_ids}
+    for c in flat_only_charges:
+        bid = c.get("billed_flat_id")
+        if bid in flat_specific:
+            amt = float(c.get("amount", 0) or 0)
+            flat_specific[bid] += amt
+            flat_specific_detail[bid].append({"charge_type": c.get("charge_type"),
+                                              "description": c.get("description") or c.get("charge_type"),
+                                              "amount": amt, "date": c.get("date", "")})
+    flat_specific_total = sum(flat_specific.values())
 
     # --- contributions ---
     contributions = {fid: 0.0 for fid in flat_ids}
@@ -176,7 +193,7 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
         cons = consumption_by_flat.get(fid, 0.0)
         water_own = cons * avg_cost
         water_cost = water_own + reserve_share
-        base = water_cost + recurring_share + adhoc_share
+        base = water_cost + recurring_share + adhoc_share + flat_specific[fid]
         # Opening dues apply until the first month is closed; after that the closed
         # month's net is what carries forward, so they are never counted twice.
         carry = float(carry_in[fid] or 0) if fid in carry_in else float(f.get("opening_dues", 0) or 0)
@@ -195,6 +212,8 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
             "water_cost": r2(water_cost),
             "recurring_share": r2(recurring_share),
             "maintenance_share": r2(adhoc_share),
+            "flat_specific": r2(flat_specific[fid]),
+            "flat_specific_detail": flat_specific_detail[fid],
             "base_cost": r2(base),
             "contributions": r2(contributions[fid]),
             "contribution_detail": contribution_detail[fid],
@@ -229,6 +248,7 @@ def compute_statement(flats, meters, readings, tankers, charges, payments, carry
         "recurring_share": r2(recurring_share),
         "maintenance_total": r2(adhoc_total),
         "maintenance_share": r2(adhoc_share),
+        "flat_specific_total": r2(flat_specific_total),
         "billable_total": r2(sum(x["base_cost"] for x in rows)),
         "total_contributions": r2(sum(x["contributions"] for x in rows)),
         "total_received": r2(sum(x["received"] for x in rows)),

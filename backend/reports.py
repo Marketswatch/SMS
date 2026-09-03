@@ -104,24 +104,30 @@ def build_sections(which, stmt, month_label, tankers, flat_name, dmy, styles):
     t = stmt["totals"]
     flats_pal = X.Palette(X.OWNER_TINTS)   # one colour per flat, shared by its meters
     payers = X.Palette(X.PAYER_TINTS)
-    out = [Paragraph(f"<b>{REPORT_TITLES[which]}</b>", styles["Heading2"]),
-           Paragraph(f"{stmt['property']['name']} · {month_label} · sorted by floor, then flat number",
-                     styles["Normal"]), Spacer(1, 8)]
+    out = [Paragraph(f"<para align=center><b>{REPORT_TITLES[which]} — {stmt['property']['name']}</b></para>",
+                     styles["Heading2"]),
+           Paragraph(f"<para align=center>For the month of {month_label}</para>", styles["Normal"]),
+           Spacer(1, 10)]
 
     if which == "meters":
         combined = {}
         for m in stmt["meters"]:
             combined[m.get("flat_id")] = round(combined.get(m.get("flat_id"), 0) + float(m.get("charge") or 0), 2)
-        head = ["S.No", "House", "Floor", "Owner", "Meter number", "Starting\nunit", "Ending\nunit",
+        head = ["S.No", "Floor", "House", "Owner", "Meter number", "Starting\nunit", "Ending\nunit",
                 "Consumed\nunits", "Water\ncharges", "Total\nAmount"]
         rows, fills = [], []
+        seen = set()
         for i, m in enumerate(stmt["meters"], start=1):
-            rows.append([i, m.get("flat_number", ""), m.get("floor", "") or "—", m.get("owner_name", ""),
+            fid = m.get("flat_id")
+            first = fid not in seen
+            seen.add(fid)
+            rows.append([i, (m.get("floor", "") or "—") if first else "", m.get("flat_number", "") if first else "",
+                         m.get("owner_name", "") if first else "",
                          m.get("label", ""), _money(m.get("opening")),
                          "—" if m.get("closing") is None else _money(m.get("closing")),
                          _money(m.get("consumption")), _money(m.get("charge")),
-                         _money(combined.get(m.get("flat_id")))])
-            fills.append(flats_pal.tint(m.get("flat_id"), f"Flat {m.get('flat_number')}"))
+                         _money(combined.get(fid)) if first else ""])
+            fills.append(flats_pal.tint(fid, f"Flat {m.get('flat_number')}"))
         rows.append(["", "", "", "", "TOTAL", "", "", _money(t["total_consumed"]), _money(t["metered_charges"]), ""])
         out += [_table(head, rows, fills=fills, total=True), Spacer(1, 10),
                 _legend([("Total lorries this month", t["tanker_count"]),
@@ -185,15 +191,16 @@ def build_sections(which, stmt, month_label, tankers, flat_name, dmy, styles):
 
     else:  # reconciliation
         head = ["S.No", "Flat\nNo.", "Floor", "Owner", "Metered", "Non-Metered\n(in storage)",
-                "Total Water\ncost", "Misc", "Total\namount", "Bal brought\nforward",
+                "Total Water\ncost", "Flat-\nspecific", "Misc", "Total\namount", "Bal brought\nforward",
                 "Advance payment\npaid by", "Amount\npaid", "Balance to\npay / receive",
                 "Date of\npayment", "Paid\nby", "Status"]
-        widths = [9 * mm, 11 * mm, 12 * mm, 32 * mm, 16 * mm, 19 * mm, 17 * mm, 13 * mm, 17 * mm,
-                  18 * mm, 22 * mm, 16 * mm, 19 * mm, 17 * mm, 11 * mm, 21 * mm]
+        widths = [8 * mm, 10 * mm, 11 * mm, 28 * mm, 15 * mm, 18 * mm, 16 * mm, 14 * mm, 13 * mm,
+                  16 * mm, 17 * mm, 21 * mm, 15 * mm, 18 * mm, 16 * mm, 10 * mm, 20 * mm]
         rows, fills = [], []
         for i, r in enumerate(stmt["rows"], start=1):
             rows.append([i, r["flat_number"], r.get("floor", "") or "—", r["owner_name"],
                          _money(r["water_own_cost"]), _money(r["reserve_share"]), _money(r["water_cost"]),
+                         _money(r.get("flat_specific", 0)),
                          _money(r["recurring_share"] + r["maintenance_share"]), _money(r["base_cost"]),
                          _money(r["carry_in"]), _money(r["contributions"]), _money(r["received"]),
                          _money(r["net"]), dmy(r.get("last_paid_on")),
@@ -202,12 +209,13 @@ def build_sections(which, stmt, month_label, tankers, flat_name, dmy, styles):
             fills.append(flats_pal.tint(r["flat_id"], f"Flat {r['flat_number']}"))
         rows.append(["", "", "", "TOTAL", _money(t["total_water_spend"] - t["reserve_value"]),
                      _money(t["reserve_value"]), _money(t["total_water_spend"]),
+                     _money(t["flat_specific_total"]),
                      _money(t["recurring_total"] + t["maintenance_total"]), _money(t["billable_total"]),
                      _money(t["total_carry_in"]), _money(t["total_contributions"]),
                      _money(t["total_received"]), _money(t["net_position"]), "", "", ""])
         out += [_table(head, rows, widths=widths, fills=fills, total=True,
                        group=[None, None, None, None, "Water Charges", "", "",
-                              None, None, None, None, None, None, None, None, None]),
+                              None, None, None, None, None, None, None, None, None, None]),
                 Spacer(1, 10),
                 _legend([("Total expense for the month", _money(t["billable_total"])),
                          ("Split between (no. of houses)", t["flat_count"]),
@@ -244,8 +252,8 @@ def build_pdf(stmt, month_label, tankers, flat_name, dmy, which=("all",), cover=
                            ("Collected", _money(t["total_received"])),
                            ("Net outstanding", _money(t["net_position"]))]),
                   Spacer(1, 16),
-                  Paragraph("Every report is sorted by floor, then flat number. Each owner and each meter "
-                            "carries its own colour so a line can be traced at a glance.", styles["Normal"])]
+                  Paragraph("Each owner's flat carries its own colour so a line can be traced at a glance.",
+                            styles["Normal"])]
 
     for w in wanted:
         if story:

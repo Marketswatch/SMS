@@ -24,7 +24,8 @@ export default function Reconcile() {
   const [flats, setFlats] = useState([]);
   const [tick, setTick] = useState(0);
   const { statement } = useStatement(propertyId, month, tick);
-  const [form, setForm] = useState({ flat_id: "", amount: "", date: `${month}-01`, payer_type: "owner", direction: "received", notes: "" });
+  const [form, setForm] = useState({ flat_id: "", amount: "", date: `${month}-01`, payer_type: "owner", direction: "received", mode: "cash", reference: "", notes: "" });
+  const [refund, setRefund] = useState(null);   // { flat_id, flat_number, credit, amount, date, mode, reference }
 
   const load = useCallback(async () => {
     if (!propertyId) return;
@@ -42,10 +43,25 @@ export default function Reconcile() {
     try {
       await api.post("/payments", {
         property_id: propertyId, month, flat_id: form.flat_id, amount: Number(form.amount || 0),
-        date: form.date, payer_type: form.payer_type, direction: form.direction, notes: form.notes,
+        date: form.date, payer_type: form.payer_type, direction: form.direction,
+        mode: form.mode, reference: form.reference, notes: form.notes,
       });
       toast.success(form.direction === "received" ? "Payment recorded" : "Payout recorded");
-      setForm({ ...form, amount: "", notes: "" });
+      setForm({ ...form, amount: "", reference: "", notes: "" });
+      load(); setTick((t) => t + 1);
+    } catch (err) { toast.error(errMsg(err)); }
+  };
+
+  const saveRefund = async () => {
+    try {
+      await api.post("/payments", {
+        property_id: propertyId, month, flat_id: refund.flat_id, amount: Number(refund.amount || 0),
+        date: refund.date, payer_type: "owner", direction: "payout",
+        mode: refund.mode, reference: refund.reference,
+        notes: `Credit paid back${Number(refund.amount) < refund.credit ? " (part payment)" : ""}`,
+      });
+      toast.success(`${money(Number(refund.amount))} paid back to flat ${refund.flat_number}`);
+      setRefund(null);
       load(); setTick((t) => t + 1);
     } catch (err) { toast.error(errMsg(err)); }
   };
@@ -114,29 +130,98 @@ export default function Reconcile() {
       <Card title="Water reconciliation — owner statement" testId="reconcile-table-card" className="mb-8">
         {!statement?.rows?.length ? <Empty testId="reconcile-empty" title="Nothing to reconcile" hint="Add flats and charges first." /> : (
           <ReconTable rows={statement.rows} totals={t} testPrefix="reconcile"
-                      extraHead={<th>Notify owner</th>}
+                      extraHead={<th>Actions</th>}
                       extraCell={(r) => (
                         <td>
-                          {r.owner_phone ? (
-                            <div className="flex gap-1.5">
-                              <button title={`WhatsApp ${r.owner_phone}`} aria-label={`Send WhatsApp dues message to ${r.owner_name}`} data-testid={`notify-whatsapp-${r.flat_number}`}
-                                      onClick={() => openWhatsApp(r.owner_phone, msgFor(r))}
-                                      className="p-2.5 border border-slate-300 rounded-md hover:bg-emerald-50 hover:border-emerald-300 text-emerald-700">
-                                <MessageCircle className="w-4 h-4" />
+                          <div className="flex gap-1.5 items-center">
+                            {r.net < -0.005 && !locked && (
+                              <button data-testid={`payback-${r.flat_number}`}
+                                      title={`Pay back ${money(-r.net)} to flat ${r.flat_number}`}
+                                      onClick={() => setRefund({
+                                        flat_id: r.flat_id, flat_number: r.flat_number, credit: -r.net,
+                                        amount: String((-r.net).toFixed(2)), date: `${month}-01`,
+                                        mode: "cash", reference: "",
+                                      })}
+                                      className="px-2 py-1.5 text-xs border border-violet-300 text-violet-700 rounded hover:bg-violet-50 whitespace-nowrap">
+                                Pay back
                               </button>
-                              <button title={`SMS ${r.owner_phone}`} aria-label={`Send SMS dues message to ${r.owner_name}`} data-testid={`notify-sms-${r.flat_number}`}
-                                      onClick={() => openSms(r.owner_phone, msgFor(r))}
-                                      className="p-2.5 border border-slate-300 rounded-md hover:bg-slate-100 text-slate-700">
-                                <Send className="w-4 h-4" />
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-xs text-slate-400">Add owner phone in Setup</span>
-                          )}
+                            )}
+                            {r.owner_phone ? (
+                              <>
+                                <button title={`WhatsApp ${r.owner_phone}`} aria-label={`Send WhatsApp dues message to ${r.owner_name}`} data-testid={`notify-whatsapp-${r.flat_number}`}
+                                        onClick={() => openWhatsApp(r.owner_phone, msgFor(r))}
+                                        className="p-2 border border-slate-300 rounded-md hover:bg-emerald-50 hover:border-emerald-300 text-emerald-700">
+                                  <MessageCircle className="w-4 h-4" />
+                                </button>
+                                <button title={`SMS ${r.owner_phone}`} aria-label={`Send SMS dues message to ${r.owner_name}`} data-testid={`notify-sms-${r.flat_number}`}
+                                        onClick={() => openSms(r.owner_phone, msgFor(r))}
+                                        className="p-2 border border-slate-300 rounded-md hover:bg-slate-100 text-slate-700">
+                                  <Send className="w-4 h-4" />
+                                </button>
+                              </>
+                            ) : (
+                              <span className="text-xs text-slate-400">Add owner phone</span>
+                            )}
+                          </div>
                         </td>
                       )} />
         )}
       </Card>
+
+      {refund && (
+        <AlertDialog open onOpenChange={(o) => !o && setRefund(null)}>
+          <AlertDialogContent data-testid="payback-dialog">
+            <AlertDialogHeader>
+              <AlertDialogTitle>Pay back credit — flat {refund.flat_number}</AlertDialogTitle>
+              <AlertDialogDescription>
+                This flat is in credit of <b className="mono">{money(refund.credit)}</b>. Record the full amount
+                or a part payment — any balance stays in credit.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <Label className="label-caps">Amount paid back</Label>
+                  <Input type="number" inputMode="decimal" step="any" className="mt-2 h-11 mono"
+                         data-testid="payback-amount-input" value={refund.amount}
+                         onChange={(e) => setRefund({ ...refund, amount: e.target.value })} />
+                </div>
+                <div>
+                  <Label className="label-caps">Date of payment</Label>
+                  <Input type="date" className="mt-2 h-11" data-testid="payback-date-input"
+                         value={refund.date} onChange={(e) => setRefund({ ...refund, date: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <Label className="label-caps">Mode</Label>
+                <Select value={refund.mode}
+                        onValueChange={(v) => setRefund({ ...refund, mode: v, reference: v === "cash" ? "" : refund.reference })}>
+                  <SelectTrigger className="mt-2 h-11" data-testid="payback-mode-select"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="upi">UPI</SelectItem>
+                    <SelectItem value="bank">Bank Transfer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {refund.mode !== "cash" && (
+                <div>
+                  <Label className="label-caps">Reference / UPI txn no.</Label>
+                  <Input className="mt-2 h-11 mono" data-testid="payback-reference-input"
+                         placeholder="UPI ref / bank txn no." value={refund.reference}
+                         onChange={(e) => setRefund({ ...refund, reference: e.target.value })} />
+                </div>
+              )}
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel data-testid="payback-cancel-btn">Cancel</AlertDialogCancel>
+              <AlertDialogAction onClick={saveRefund} data-testid="payback-save-btn"
+                                 className="bg-violet-700 text-white">Record pay back</AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+      )}
+
 
       <div className="grid lg:grid-cols-[380px_1fr] gap-6 [&>*]:min-w-0">
         <Card title="Record payment / payout" testId="payment-form-card">
@@ -180,6 +265,27 @@ export default function Reconcile() {
                 </div>
               </div>
               <div>
+                <Label className="label-caps">Mode</Label>
+                <Select value={form.mode}
+                        onValueChange={(v) => setForm({ ...form, mode: v, reference: v === "cash" ? "" : form.reference })}>
+                  <SelectTrigger className="mt-2 h-11" data-testid="payment-mode-select"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="cash">Cash</SelectItem>
+                    <SelectItem value="upi">UPI</SelectItem>
+                    <SelectItem value="bank">Bank Transfer</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {form.mode !== "cash" && (
+                <div>
+                  <Label className="label-caps">Reference / UPI txn no.</Label>
+                  <Input className="mt-2 h-11 mono" required data-testid="payment-reference-input"
+                         placeholder="UPI ref / bank txn no." value={form.reference}
+                         onChange={(e) => setForm({ ...form, reference: e.target.value })} />
+                </div>
+              )}
+
+              <div>
                 <Label className="label-caps">Notes</Label>
                 <Input className="mt-2 h-11" data-testid="payment-notes-input"
                        value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} />
@@ -196,7 +302,7 @@ export default function Reconcile() {
           {!payments.length ? <Empty testId="payments-empty" title="No payments recorded" hint="All payments and payouts are entered manually." /> : (
             <div className="overflow-x-auto">
               <table className="data-table">
-                <thead><tr><th className="text-right">S.No</th><th>Date</th><th>Flat</th><th>Type</th><th>Paid by</th><th className="text-right">Amount</th><th>Notes</th><th /></tr></thead>
+                <thead><tr><th className="text-right">S.No</th><th>Date</th><th>Flat</th><th>Type</th><th>Paid by</th><th>Mode</th><th>Reference</th><th className="text-right">Amount</th><th>Notes</th><th /></tr></thead>
                 <tbody>
                   {payments.map((p, i) => (
                     <tr key={p.id} data-testid={`payment-row-${p.id}`}>
@@ -211,6 +317,10 @@ export default function Reconcile() {
                         </span>
                       </td>
                       <td className="capitalize text-slate-500">{p.payer_type}</td>
+                      <td className="text-slate-500" data-testid={`payment-mode-${p.id}`}>
+                        {{ cash: "Cash", upi: "UPI", bank: "Bank Transfer" }[p.mode] || "Cash"}
+                      </td>
+                      <td className="mono text-xs text-slate-500">{p.reference || "—"}</td>
                       <td className="num">{money(p.amount)}</td>
                       <td className="text-slate-500">{p.notes || "—"}</td>
                       <td className="text-right">

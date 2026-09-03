@@ -1,0 +1,312 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="18" skipped="0" tests="136" time="22.522" timestamp="2026-08-31T09:17:18.044765+00:00" hostname="agent-env-75a625d5-b7c9-49d1-9bbf-b7c3255a55f6"><testcase classname="tests.test_iter14_water_charges.TestReadingsByMeterId" name="test_each_closing_value_lands_on_its_own_meter" time="1.011" /><testcase classname="tests.test_iter14_water_charges.TestReadingsByMeterId" name="test_media_saved_against_correct_meter" time="0.245" /><testcase classname="tests.test_iter14_water_charges.TestPaymentStatus" name="test_only_four_statuses_and_logic" time="0.077" /><testcase classname="tests.test_iter14_water_charges.TestPaymentStatus" name="test_payout_flips_prepaid_to_excess_paid_back" time="0.837" /><testcase classname="tests.test_iter14_water_charges.TestPaymentStatus" name="test_no_legacy_status_labels_in_exports" time="0.526" /><testcase classname="tests.test_iter14_water_charges.TestGroupBandAndHeaders" name="test_xlsx_group_band_and_headers" time="0.154" /><testcase classname="tests.test_iter14_water_charges.TestGroupBandAndHeaders" name="test_csv_group_band" time="0.121"><failure message="AssertionError: ['S.No', 'Flat No.', 'Floor', 'Owner', 'Metered', 'Non-Metered (in storage)', ...]&#10;assert ('Metered' == 'Metered'&#10;  &#10;    Metered and 'Total water cost' == 'Total Water cost'&#10;  &#10;  - Total Water cost&#10;  ?       ^&#10;  + Total water cost&#10;  ?       ^)">self = &lt;test_iter14_water_charges.TestGroupBandAndHeaders object at 0xff237fa06090&gt;
+client = &lt;requests.sessions.Session object at 0xff237fa96050&gt;
+pid = '6a89cf3fef0513f1ab6b2a23'
+
+    def test_csv_group_band(self, client, pid):
+        text = client.get(f"{API}/mis/export", params={"property_id": pid, "month": MONTH,
+                                                       "format": "csv"}).text
+        lines = text.splitlines()
+        band_idx = next((i for i, ln in enumerate(lines) if ln.count("Water Charges") == 3), None)
+        assert band_idx is not None, "no CSV band row with three 'Water Charges' cells"
+        cells = lines[band_idx].split(",")
+        assert cells[4:7] == ["Water Charges"] * 3, cells[:8]
+        hdr = lines[band_idx + 1].split(",")
+&gt;       assert hdr[4] == "Metered" and hdr[6] == "Total Water cost", hdr[:8]
+E       AssertionError: ['S.No', 'Flat No.', 'Floor', 'Owner', 'Metered', 'Non-Metered (in storage)', ...]
+E       assert ('Metered' == 'Metered'
+E         
+E           Metered and 'Total water cost' == 'Total Water cost'
+E         
+E         - Total Water cost
+E         ?       ^
+E         + Total water cost
+E         ?       ^)
+
+tests/test_iter14_water_charges.py:210: AssertionError</failure></testcase><testcase classname="tests.test_iter14_water_charges.TestGroupBandAndHeaders" name="test_pdf_group_band" time="0.130" /><testcase classname="tests.test_iter14_water_charges.TestGroupBandAndHeaders" name="test_total_amount_heading" time="0.442" /><testcase classname="tests.test_iter14_water_charges.TestPerFlatColours" name="test_xlsx_one_tint_per_flat_across_sheets" time="0.353" /><testcase classname="tests.test_iter14_water_charges.TestPerFlatColours" name="test_ledger_sheet_uses_same_per_flat_tints" time="0.194" /><testcase classname="tests.test_iter14_water_charges.TestPerFlatColours" name="test_pdf_same_flat_same_tint_on_both_meter_rows" time="0.361" /><testcase classname="tests.test_iter14_water_charges.TestOnePageAndNoColourKey" name="test_single_report_is_one_page[meters]" time="0.135" /><testcase classname="tests.test_iter14_water_charges.TestOnePageAndNoColourKey" name="test_single_report_is_one_page[purchases]" time="0.127" /><testcase classname="tests.test_iter14_water_charges.TestOnePageAndNoColourKey" name="test_single_report_is_one_page[recurring]" time="0.124" /><testcase classname="tests.test_iter14_water_charges.TestOnePageAndNoColourKey" name="test_single_report_is_one_page[reconciliation]" time="0.124" /><testcase classname="tests.test_iter14_water_charges.TestOnePageAndNoColourKey" name="test_combined_pack_is_cover_plus_four" time="0.173" /><testcase classname="tests.test_iter14_water_charges.TestOnePageAndNoColourKey" name="test_no_colour_key_in_pdfs" time="0.672" /><testcase classname="tests.test_iter14_water_charges.TestOnePageAndNoColourKey" name="test_no_colour_key_in_xlsx" time="0.204" /><testcase classname="tests.test_iter14_water_charges.TestOnePageAndNoColourKey" name="test_nothing_clipped_horizontally" time="0.159" /><testcase classname="tests.test_iter14_water_charges.TestRegression" name="test_pack_formats[pdf]" time="0.135" /><testcase classname="tests.test_iter14_water_charges.TestRegression" name="test_pack_formats[png]" time="0.779" /><testcase classname="tests.test_iter14_water_charges.TestRegression" name="test_pack_formats[zip]" time="0.650" /><testcase classname="tests.test_iter14_water_charges.TestRegression" name="test_mis_formats[csv]" time="0.119" /><testcase classname="tests.test_iter14_water_charges.TestRegression" name="test_mis_formats[xlsx]" time="0.183" /><testcase classname="tests.test_iter14_water_charges.TestRegression" name="test_mis_formats[pdf]" time="0.095" /><testcase classname="tests.test_iter14_water_charges.TestRegression" name="test_bad_params_rejected" time="0.153" /><testcase classname="tests.test_iter14_water_charges.TestRegression" name="test_flat_ordering_and_data_intact" time="0.116" /><testcase classname="tests.test_iter14_water_charges.TestRegression" name="test_booking_after_delivery_rejected" time="0.077" /><testcase classname="tests.test_iter13_booking_dues_pack.TestTankerDates" name="test_post_delivery_before_booking_rejected" time="0.506" /><testcase classname="tests.test_iter13_booking_dues_pack.TestTankerDates" name="test_post_and_put_booking_delivery_ok_and_put_validation" time="0.252" /><testcase classname="tests.test_iter13_booking_dues_pack.TestTankerDates" name="test_delivery_month_drives_filing_and_reserve" time="0.522" /><testcase classname="tests.test_iter13_booking_dues_pack.TestOpeningDues" name="test_flat_opening_dues_flow_to_statement" time="0.280" /><testcase classname="tests.test_iter13_booking_dues_pack.TestOpeningDues" name="test_reset_does_not_double_count_opening_dues" time="0.409" /><testcase classname="tests.test_iter13_booking_dues_pack.TestOrdering" name="test_flats_sorted_floor_then_flat" time="0.053" /><testcase classname="tests.test_iter13_booking_dues_pack.TestOrdering" name="test_statement_rows_and_meters_sorted" time="0.060" /><testcase classname="tests.test_iter13_booking_dues_pack.TestOrdering" name="test_statement_row_has_paid_by" time="0.000" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_combined_pdf" time="0.093"><failure message="AssertionError: colour keys=0&#10;assert 0 &gt;= 4&#10; +  where 0 = &lt;built-in method count of str object at 0xb141734cfb80&gt;('Colour key')&#10; +    where &lt;built-in method count of str object at 0xb141734cfb80&gt; = 'Sunrise Residency\nMonth-end owner report pack · August 2026\nReports in this pack\n4\nHouses\n4\nWater purchased (L)...ead\n7,137.50\nTotal receivable (owes)\n6,048.66\nTotal payable (owed to owners)\n10,848.66\nNet position\n-4,800.00\n'.count">self = &lt;test_iter13_booking_dues_pack.TestReportPack object at 0xff237fa3dbd0&gt;
+client = &lt;requests.sessions.Session object at 0xff237f71eb50&gt;
+prop = {'name': 'Sunrise Residency', 'address': '12th Cross, Indiranagar, Bengaluru', 'default_payers': {'water': 'tenant', '... 'tenant', ...}, 'recurring_defaults': {'security': 6000, 'electricity': 3500, 'cleaning': 4000, 'sweeper': 2500}, ...}
+stmt = {'rows': [{'flat_id': '6a89cf3fef0513f1ab6b2a25', 'flat_number': '101', 'floor': 'Ground', 'owner_name': 'Ramesh Kumar...1ab6b2a2a', 'label': 'Meter 201', 'flat_id': '6a89cf3fef0513f1ab6b2a29', 'flat_number': '201', ...}], 'flags': [], ...}
+
+    def test_combined_pdf(self, client, prop, stmt):
+        r = client.get(f"{API}/reports/pack", params={"property_id": prop["id"], "month": MONTH,
+                                                      "report": "all", "format": "pdf"})
+        assert r.status_code == 200, r.text[:300]
+        assert r.headers["content-type"].startswith("application/pdf")
+        text, doc = pdf_text(r.content)
+        assert doc.page_count &gt;= 2
+        assert "Month-end owner report pack" in text, "cover page missing"
+        for title in ["as per meter readings", "Total water purchases for the month",
+                      "Recurring entries", "Water reconciliation"]:
+            assert title in text, f"section missing: {title}"
+        assert "Advance payment" in text and "paid by" in text
+        assert "Booking" in text and "Delivery" in text
+&gt;       assert text.count("Colour key") &gt;= 4, f"colour keys={text.count('Colour key')}"
+E       AssertionError: colour keys=0
+E       assert 0 &gt;= 4
+E        +  where 0 = &lt;built-in method count of str object at 0xb141734cfb80&gt;('Colour key')
+E        +    where &lt;built-in method count of str object at 0xb141734cfb80&gt; = 'Sunrise Residency\nMonth-end owner report pack · August 2026\nReports in this pack\n4\nHouses\n4\nWater purchased (L)...ead\n7,137.50\nTotal receivable (owes)\n6,048.66\nTotal payable (owed to owners)\n10,848.66\nNet position\n-4,800.00\n'.count
+
+tests/test_iter13_booking_dues_pack.py:231: AssertionError</failure></testcase><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_single_report_pdf[meters-as per meter readings-Water reconciliation]" time="0.077" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_single_report_pdf[purchases-Total water purchases-Recurring entries]" time="0.071" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_single_report_pdf[recurring-Recurring entries-Total water purchases]" time="0.053" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_single_report_pdf[reconciliation-Water reconciliation-as per meter readings]" time="0.078" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_png" time="0.707" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_zip" time="0.627" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_bad_params_400[params0]" time="0.047" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_bad_params_400[params1]" time="0.064" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_pdf_colours_navy_header_and_unique_rows" time="0.056" /><testcase classname="tests.test_iter13_booking_dues_pack.TestReportPack" name="test_nothing_clipped" time="0.080" /><testcase classname="tests.test_iter13_booking_dues_pack.TestMisRegression" name="test_export_ok[csv]" time="0.052" /><testcase classname="tests.test_iter13_booking_dues_pack.TestMisRegression" name="test_export_ok[pdf]" time="0.080" /><testcase classname="tests.test_iter13_booking_dues_pack.TestMisRegression" name="test_export_ok[xlsx]" time="0.100" /><testcase classname="tests.test_iter13_booking_dues_pack.TestMisRegression" name="test_csv_renamed_and_new_columns" time="0.054" /><testcase classname="tests.test_iter13_booking_dues_pack.TestMisRegression" name="test_pdf_renamed_columns" time="0.065" /><testcase classname="tests.test_iter13_booking_dues_pack.TestMisRegression" name="test_xlsx_tanker_and_recon_columns" time="0.148" /><testcase classname="tests.test_iter13_booking_dues_pack.TestMisRegression" name="test_annual_export" time="0.056" /><testcase classname="tests.test_iter12_fixes.TestPalettes" name="test_sheets_unchanged" time="0.545" /><testcase classname="tests.test_iter12_fixes.TestPalettes" name="test_ledger_colour_key_lists_only_owners" time="0.060"><failure message="AssertionError: Ledger colour key block missing&#10;assert None">self = &lt;test_iter12_fixes.TestPalettes object at 0xff237fa64a10&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f8aec90&gt;
+flats = [{'property_id': '6a89cf3fef0513f1ab6b2a23', 'number': '101', 'owner_name': 'Ramesh Kumar', 'owner_user_id': None, ...... {'property_id': '6a89cf3fef0513f1ab6b2a23', 'number': '201', 'owner_name': 'Vikram Nair', 'owner_user_id': None, ...}]
+
+    def test_ledger_colour_key_lists_only_owners(self, wb, flats):
+        block = key_block(wb["Ledger"], "Colour key — owner")
+&gt;       assert block, "Ledger colour key block missing"
+E       AssertionError: Ledger colour key block missing
+E       assert None
+
+tests/test_iter12_fixes.py:104: AssertionError</failure></testcase><testcase classname="tests.test_iter12_fixes.TestPalettes" name="test_recon_owner_tints_unique" time="0.000"><failure message="assert None">self = &lt;test_iter12_fixes.TestPalettes object at 0xff237fa65090&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f8aec90&gt;
+
+    def test_recon_owner_tints_unique(self, wb):
+        block = key_block(wb["Water Reconciliation"], "Colour key — owner")
+&gt;       assert block
+E       assert None
+
+tests/test_iter12_fixes.py:114: AssertionError</failure></testcase><testcase classname="tests.test_iter12_fixes.TestPalettes" name="test_fronted_by_key_lists_flats[Tanker Purchases]" time="0.001"><failure message="AssertionError: Tanker Purchases has no 'Colour key — fronted by' block&#10;assert None">self = &lt;test_iter12_fixes.TestPalettes object at 0xff237fa65ed0&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f8aec90&gt;
+sheetname = 'Tanker Purchases'
+flats = [{'property_id': '6a89cf3fef0513f1ab6b2a23', 'number': '101', 'owner_name': 'Ramesh Kumar', 'owner_user_id': None, ...... {'property_id': '6a89cf3fef0513f1ab6b2a23', 'number': '201', 'owner_name': 'Vikram Nair', 'owner_user_id': None, ...}]
+
+    @pytest.mark.parametrize("sheetname", ["Tanker Purchases", "Charges"])
+    def test_fronted_by_key_lists_flats(self, wb, sheetname, flats):
+        block = key_block(wb[sheetname], "Colour key — fronted by")
+&gt;       assert block, f"{sheetname} has no 'Colour key — fronted by' block"
+E       AssertionError: Tanker Purchases has no 'Colour key — fronted by' block
+E       assert None
+
+tests/test_iter12_fixes.py:122: AssertionError</failure></testcase><testcase classname="tests.test_iter12_fixes.TestPalettes" name="test_fronted_by_key_lists_flats[Charges]" time="0.001"><failure message="AssertionError: Charges has no 'Colour key — fronted by' block&#10;assert None">self = &lt;test_iter12_fixes.TestPalettes object at 0xff237fa66110&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f8aec90&gt;
+sheetname = 'Charges'
+flats = [{'property_id': '6a89cf3fef0513f1ab6b2a23', 'number': '101', 'owner_name': 'Ramesh Kumar', 'owner_user_id': None, ...... {'property_id': '6a89cf3fef0513f1ab6b2a23', 'number': '201', 'owner_name': 'Vikram Nair', 'owner_user_id': None, ...}]
+
+    @pytest.mark.parametrize("sheetname", ["Tanker Purchases", "Charges"])
+    def test_fronted_by_key_lists_flats(self, wb, sheetname, flats):
+        block = key_block(wb[sheetname], "Colour key — fronted by")
+&gt;       assert block, f"{sheetname} has no 'Colour key — fronted by' block"
+E       AssertionError: Charges has no 'Colour key — fronted by' block
+E       assert None
+
+tests/test_iter12_fixes.py:122: AssertionError</failure></testcase><testcase classname="tests.test_iter12_fixes.TestPalettes" name="test_owner_and_payer_palettes_are_independent" time="0.000"><failure message="TypeError: 'NoneType' object is not iterable">self = &lt;test_iter12_fixes.TestPalettes object at 0xff237fa66710&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f8aec90&gt;
+
+    def test_owner_and_payer_palettes_are_independent(self, wb):
+&gt;       owner_labels = {b[0] for b in key_block(wb["Ledger"], "Colour key — owner")}
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       TypeError: 'NoneType' object is not iterable
+
+tests/test_iter12_fixes.py:132: TypeError</failure></testcase><testcase classname="tests.test_iter12_fixes.TestManyOwners" name="test_twelve_owners_all_distinct_tints" time="1.021"><failure message="AssertionError: None&#10;assert (None)">self = &lt;test_iter12_fixes.TestManyOwners object at 0xff237fa66d90&gt;
+scratch_wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e8690&gt;
+
+    def test_twelve_owners_all_distinct_tints(self, scratch_wb):
+        block = key_block(scratch_wb["Water Reconciliation"], "Colour key — owner")
+&gt;       assert block and len(block) == 12, block
+E       AssertionError: None
+E       assert (None)
+
+tests/test_iter12_fixes.py:172: AssertionError</failure></testcase><testcase classname="tests.test_iter12_fixes.TestManyOwners" name="test_row_fills_match_owner_key" time="0.000" /><testcase classname="tests.test_iter12_fixes.TestManyOwners" name="test_same_label_meters_get_different_tints" time="0.000" /><testcase classname="tests.test_iter12_fixes.TestManyOwners" name="test_meter_colour_key_shows_label_verbatim" time="0.000"><failure message="AssertionError: None&#10;assert (None)">self = &lt;test_iter12_fixes.TestManyOwners object at 0xff237fa66490&gt;
+scratch_wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e8690&gt;
+
+    def test_meter_colour_key_shows_label_verbatim(self, scratch_wb):
+        block = key_block(scratch_wb["Water Usage (Meters)"], "Colour key — meter")
+&gt;       assert block and len(block) == 2, block
+E       AssertionError: None
+E       assert (None)
+
+tests/test_iter12_fixes.py:203: AssertionError</failure></testcase><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_mis_export_bad_format[bogus]" time="0.063" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_mis_export_bad_format[xls]" time="0.059" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_mis_export_bad_format[PDF]" time="0.058" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_mis_export_bad_format[]" time="0.057" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_mis_export_bad_format[html]" time="0.057" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_mis_export_good_format[csv-text/csv]" time="0.060" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_mis_export_good_format[pdf-application/pdf]" time="0.073" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_mis_export_good_format[xlsx-application/vnd.openxmlformats-officedocument.spreadsheetml.sheet]" time="0.114" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_annual_export_bad_format[bogus]" time="0.057" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_annual_export_bad_format[xlsx]" time="0.059" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_annual_export_bad_format[xls]" time="0.056" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_annual_export_good_format[csv-text/csv]" time="0.064" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_annual_export_good_format[pdf-application/pdf]" time="0.077" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_rentals_export_bad_format[bogus]" time="0.065" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_rentals_export_bad_format[xls]" time="0.061" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_rentals_export_bad_format[doc]" time="0.060" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_rentals_export_good_format[csv-text/csv]" time="0.087" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_rentals_export_good_format[pdf-application/pdf]" time="0.072" /><testcase classname="tests.test_iter12_fixes.TestFormatValidation" name="test_rentals_export_good_format[xlsx-application/vnd.openxmlformats-officedocument.spreadsheetml.sheet]" time="0.113" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_mis_export_bad_month[bad]" time="0.056" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_mis_export_bad_month[2026-13]" time="0.056" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_mis_export_bad_month[2026-00]" time="0.057" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_mis_export_bad_month[202608]" time="0.056" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_mis_export_bad_month[2026-8]" time="0.057" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_mis_export_bad_month[]" time="0.059" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_statement_bad_month[bad]" time="0.055" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_statement_bad_month[2026-13]" time="0.058" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_statement_bad_month[2026-00]" time="0.056" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_statement_bad_month[2026-8]" time="0.057" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_reads_do_not_create_periods" time="0.814" /><testcase classname="tests.test_iter12_fixes.TestMonthValidation" name="test_writes_still_create_and_lock_periods" time="0.276" /><testcase classname="tests.test_iter12_fixes.TestChargesSheet" name="test_charges_frozen_panes" time="0.000" /><testcase classname="tests.test_iter12_fixes.TestChargesSheet" name="test_all_sheets_frozen" time="0.000" /><testcase classname="tests.test_iter12_fixes.TestChargesSheet" name="test_charges_sections_and_totals" time="0.000" /><testcase classname="tests.test_iter12_fixes.TestChargesSheet" name="test_navy_headers_everywhere" time="0.000" /><testcase classname="tests.test_iter12_fixes.TestMonthClose" name="test_payment_direction_is_constrained" time="0.591" /><testcase classname="tests.test_iter12_fixes.TestMonthClose" name="test_close_month_carries_forward" time="0.440" /><testcase classname="tests.test_iter12_fixes.TestMonthClose" name="test_double_reset_rejected" time="0.177" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_content_type_and_filename" time="0.618" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_exact_five_sheets" time="0.023" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_recon_headers_order" time="0.001"><failure message="AssertionError: assert ['S.No', 'Fla...torage)', ...] == ['S.No', 'Fla...eserve)', ...]&#10;  &#10;  At index 4 diff: 'Metered' != 'Metered cost'&#10;  Use -v to get more diff">self = &lt;test_iter11_xlsx_export.TestMisWorkbook object at 0xff237faa01d0&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e94d0&gt;
+
+    def test_recon_headers_order(self, wb):
+        ws = wb["Water Reconciliation"]
+        hr = find_header_row(ws, "S.No")
+        assert hr, "header row not found"
+        got = [str(ws.cell(row=hr, column=j).value) for j in range(1, 17)]
+&gt;       assert got == RECON_HEADERS
+E       AssertionError: assert ['S.No', 'Fla...torage)', ...] == ['S.No', 'Fla...eserve)', ...]
+E         
+E         At index 4 diff: 'Metered' != 'Metered cost'
+E         Use -v to get more diff
+
+tests/test_iter11_xlsx_export.py:118: AssertionError</failure></testcase><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_header_style_all_sheets" time="0.000" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_frozen_panes_and_widths" time="0.000" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_recon_values_match_statement" time="0.057"><failure message="assert 5025.0 == 6952.01&#10; +  where 5025.0 = round(5025.0, 2)&#10; +    where 5025.0 = float(5025)&#10; +  and   6952.01 = round(6952.01, 2)">self = &lt;test_iter11_xlsx_export.TestMisWorkbook object at 0xff237faa1790&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e94d0&gt;
+statement = {'rows': [{'flat_id': '6a89cf3fef0513f1ab6b2a25', 'flat_number': '101', 'floor': 'Ground', 'owner_name': 'Ramesh Kumar...1ab6b2a2a', 'label': 'Meter 201', 'flat_id': '6a89cf3fef0513f1ab6b2a29', 'flat_number': '201', ...}], 'flags': [], ...}
+
+    def test_recon_values_match_statement(self, wb, statement):
+        ws = wb["Water Reconciliation"]
+        hr = find_header_row(ws, "S.No")
+        rows = statement["rows"]
+        for i, r in enumerate(rows):
+            row = hr + 1 + i
+            vals = [ws.cell(row=row, column=j).value for j in range(1, 16)]
+            assert vals[0] == i + 1
+            assert vals[1] == r["flat_number"]
+            assert vals[3] == r["owner_name"], f"owner mismatch {vals[3]}"
+            assert round(float(vals[4]), 2) == round(r["water_own_cost"], 2)
+            assert round(float(vals[5]), 2) == round(r["reserve_share"], 2)
+            assert round(float(vals[6]), 2) == round(r["water_cost"], 2)
+&gt;           assert round(float(vals[8]), 2) == round(r["base_cost"], 2)
+E           assert 5025.0 == 6952.01
+E            +  where 5025.0 = round(5025.0, 2)
+E            +    where 5025.0 = float(5025)
+E            +  and   6952.01 = round(6952.01, 2)
+
+tests/test_iter11_xlsx_export.py:150: AssertionError</failure></testcase><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_recon_total_row_shaded" time="0.001"><failure message="assert 20100.0 == 28550.0&#10; +  where 20100.0 = round(20100.0, 2)&#10; +    where 20100.0 = float(20100)&#10; +      where 20100 = &lt;Cell 'Water Reconciliation'.I10&gt;.value&#10; +        where &lt;Cell 'Water Reconciliation'.I10&gt; = cell(row=10, column=9)&#10; +          where cell = &lt;Worksheet &quot;Water Reconciliation&quot;&gt;.cell&#10; +  and   28550.0 = round(28550.0, 2)">self = &lt;test_iter11_xlsx_export.TestMisWorkbook object at 0xff237faa1e90&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e94d0&gt;
+statement = {'rows': [{'flat_id': '6a89cf3fef0513f1ab6b2a25', 'flat_number': '101', 'floor': 'Ground', 'owner_name': 'Ramesh Kumar...1ab6b2a2a', 'label': 'Meter 201', 'flat_id': '6a89cf3fef0513f1ab6b2a29', 'flat_number': '201', ...}], 'flags': [], ...}
+
+    def test_recon_total_row_shaded(self, wb, statement):
+        ws = wb["Water Reconciliation"]
+        hr = find_header_row(ws, "S.No")
+        trow = hr + 1 + len(statement["rows"])
+        assert ws.cell(row=trow, column=4).value == "TOTAL"
+        assert rgb(ws.cell(row=trow, column=4)) == TOTAL_FILL
+        t = statement["totals"]
+&gt;       assert round(float(ws.cell(row=trow, column=9).value), 2) == round(t["billable_total"], 2)
+E       assert 20100.0 == 28550.0
+E        +  where 20100.0 = round(20100.0, 2)
+E        +    where 20100.0 = float(20100)
+E        +      where 20100 = &lt;Cell 'Water Reconciliation'.I10&gt;.value
+E        +        where &lt;Cell 'Water Reconciliation'.I10&gt; = cell(row=10, column=9)
+E        +          where cell = &lt;Worksheet "Water Reconciliation"&gt;.cell
+E        +  and   28550.0 = round(28550.0, 2)
+
+tests/test_iter11_xlsx_export.py:170: AssertionError</failure></testcase><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_balance_red_green" time="0.001"><failure message="AssertionError: 101 net&lt;0 colour &#10;assert (False)&#10; +  where False = &lt;openpyxl.styles.fonts.Font object&gt;\nParameters:\nname=None, charset=None, family=None, b=False, i=False, strike=None, outline=None, shadow=None, condense=None, color=None, extend=None, sz=10.0, u=None, vertAlign=None, scheme=None.bold&#10; +    where &lt;openpyxl.styles.fonts.Font object&gt;\nParameters:\nname=None, charset=None, family=None, b=False, i=False, strike=None, outline=None, shadow=None, condense=None, color=None, extend=None, sz=10.0, u=None, vertAlign=None, scheme=None = &lt;Cell 'Water Reconciliation'.M6&gt;.font">self = &lt;test_iter11_xlsx_export.TestMisWorkbook object at 0xff237faa1b10&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e94d0&gt;
+statement = {'rows': [{'flat_id': '6a89cf3fef0513f1ab6b2a25', 'flat_number': '101', 'floor': 'Ground', 'owner_name': 'Ramesh Kumar...1ab6b2a2a', 'label': 'Meter 201', 'flat_id': '6a89cf3fef0513f1ab6b2a29', 'flat_number': '201', ...}], 'flags': [], ...}
+
+    def test_balance_red_green(self, wb, statement):
+        ws = wb["Water Reconciliation"]
+        hr = find_header_row(ws, "S.No")
+        seen_pos = seen_neg = False
+        for i, r in enumerate(statement["rows"]):
+            c = ws.cell(row=hr + 1 + i, column=13)
+            col = (c.font.color.rgb or "")[-6:] if c.font.color else ""
+            if r["net"] &gt; 0:
+                assert c.font.bold and col == "C00000", f"{r['flat_number']} net&gt;0 colour {col}"
+                seen_pos = True
+            elif r["net"] &lt; 0:
+&gt;               assert c.font.bold and col == "1F7A3D", f"{r['flat_number']} net&lt;0 colour {col}"
+E               AssertionError: 101 net&lt;0 colour 
+E               assert (False)
+E                +  where False = &lt;openpyxl.styles.fonts.Font object&gt;\nParameters:\nname=None, charset=None, family=None, b=False, i=False, strike=None, outline=None, shadow=None, condense=None, color=None, extend=None, sz=10.0, u=None, vertAlign=None, scheme=None.bold
+E                +    where &lt;openpyxl.styles.fonts.Font object&gt;\nParameters:\nname=None, charset=None, family=None, b=False, i=False, strike=None, outline=None, shadow=None, condense=None, color=None, extend=None, sz=10.0, u=None, vertAlign=None, scheme=None = &lt;Cell 'Water Reconciliation'.M6&gt;.font
+
+tests/test_iter11_xlsx_export.py:185: AssertionError</failure></testcase><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_owner_colour_coding_and_key" time="0.001"><failure message="AssertionError: assert 'Colour key — owner' in ['Sunrise Residency — Water Reconciliation', 'August 2026 · period open · all amounts in INR', 'Water Charges', 'S.No', 'Flat No.', 'Floor', ...]">self = &lt;test_iter11_xlsx_export.TestMisWorkbook object at 0xff237faa2390&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e94d0&gt;
+statement = {'rows': [{'flat_id': '6a89cf3fef0513f1ab6b2a25', 'flat_number': '101', 'floor': 'Ground', 'owner_name': 'Ramesh Kumar...1ab6b2a2a', 'label': 'Meter 201', 'flat_id': '6a89cf3fef0513f1ab6b2a29', 'flat_number': '201', ...}], 'flags': [], ...}
+
+    def test_owner_colour_coding_and_key(self, wb, statement):
+        ws = wb["Water Reconciliation"]
+        hr = find_header_row(ws, "S.No")
+        by_owner = {}
+        for i, r in enumerate(statement["rows"]):
+            fills = {rgb(ws.cell(row=hr + 1 + i, column=j)) for j in range(1, 16)}
+            assert len(fills) == 1, f"row {i} has mixed fills {fills}"
+            tint = fills.pop()
+            assert tint, f"row {i} has no tint"
+            by_owner.setdefault(r["owner_name"], set()).add(tint)
+        for owner, tints in by_owner.items():
+            assert len(tints) == 1, f"{owner} has inconsistent tints {tints}"
+        distinct = {list(v)[0] for v in by_owner.values()}
+        assert len(distinct) == len(by_owner), f"owners share tints: {by_owner}"
+        text = cells_text(ws)
+&gt;       assert "Colour key — owner" in text
+E       AssertionError: assert 'Colour key — owner' in ['Sunrise Residency — Water Reconciliation', 'August 2026 · period open · all amounts in INR', 'Water Charges', 'S.No', 'Flat No.', 'Floor', ...]
+
+tests/test_iter11_xlsx_export.py:204: AssertionError</failure></testcase><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_summary_legend_block" time="0.001" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_original_owner_names_no_tenant_suffix" time="0.000" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_meter_sheet_colour_per_meter" time="0.001"><failure message="AssertionError: assert ['S.No', 'Hou...ng unit', ...] == ['S.No', 'Hou...ng unit', ...]&#10;  &#10;  At index 9 diff: 'Total Amount' != 'Combined (per flat)'&#10;  Use -v to get more diff">self = &lt;test_iter11_xlsx_export.TestMisWorkbook object at 0xff237faa3010&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e94d0&gt;
+statement = {'rows': [{'flat_id': '6a89cf3fef0513f1ab6b2a25', 'flat_number': '101', 'floor': 'Ground', 'owner_name': 'Ramesh Kumar...1ab6b2a2a', 'label': 'Meter 201', 'flat_id': '6a89cf3fef0513f1ab6b2a29', 'flat_number': '201', ...}], 'flags': [], ...}
+
+    def test_meter_sheet_colour_per_meter(self, wb, statement):
+        ws = wb["Water Usage (Meters)"]
+        hr = find_header_row(ws, "S.No")
+        heads = [str(ws.cell(row=hr, column=j).value) for j in range(1, 11)]
+&gt;       assert heads == ["S.No", "House", "Floor", "Owner", "Meter number", "Starting unit",
+                         "Ending unit", "Consumed units", "Water charges", "Combined (per flat)"]
+E       AssertionError: assert ['S.No', 'Hou...ng unit', ...] == ['S.No', 'Hou...ng unit', ...]
+E         
+E         At index 9 diff: 'Total Amount' != 'Combined (per flat)'
+E         Use -v to get more diff
+
+tests/test_iter11_xlsx_export.py:230: AssertionError</failure></testcase><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_meter_total_row" time="0.000" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_tanker_sheet" time="0.055" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_charges_sections" time="0.000" /><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_ledger_sheet" time="0.052"><failure message="assert 'Colour key — owner' in ['Sunrise Residency — Payments &amp; Payouts Ledger', 'August 2026', 'S.No', 'Date', 'Flat No.', 'Owner', ...]&#10; +  where ['Sunrise Residency — Payments &amp; Payouts Ledger', 'August 2026', 'S.No', 'Date', 'Flat No.', 'Owner', ...] = cells_text(&lt;Worksheet &quot;Ledger&quot;&gt;)">self = &lt;test_iter11_xlsx_export.TestMisWorkbook object at 0xff237fab0b90&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e94d0&gt;
+client = &lt;requests.sessions.Session object at 0xff237f8ad390&gt;
+prop = {'name': 'Sunrise Residency', 'address': '12th Cross, Indiranagar, Bengaluru', 'default_payers': {'water': 'tenant', '... 'tenant', ...}, 'recurring_defaults': {'security': 6000, 'electricity': 3500, 'cleaning': 4000, 'sweeper': 2500}, ...}
+month = '2026-08'
+statement = {'rows': [{'flat_id': '6a89cf3fef0513f1ab6b2a25', 'flat_number': '101', 'floor': 'Ground', 'owner_name': 'Ramesh Kumar...1ab6b2a2a', 'label': 'Meter 201', 'flat_id': '6a89cf3fef0513f1ab6b2a29', 'flat_number': '201', ...}], 'flags': [], ...}
+
+    def test_ledger_sheet(self, wb, client, prop, month, statement):
+        ws = wb["Ledger"]
+        hr = find_header_row(ws, "S.No")
+        heads = [str(ws.cell(row=hr, column=j).value) for j in range(1, 9)]
+        assert heads == ["S.No", "Date", "Flat No.", "Owner", "Direction", "Paid by", "Amount", "Notes"]
+        pays = client.get(f"{API}/payments", params={"property_id": prop["id"], "month": month}).json()
+        assert len(pays) &gt; 0
+        owner_tint = {}
+        for i in range(len(pays)):
+            row = hr + 1 + i
+            d = ws.cell(row=row, column=5).value
+            assert d in ("Received", "Payout"), d
+            assert DMY.match(str(ws.cell(row=row, column=2).value))
+            assert ws.cell(row=row, column=7).number_format == "#,##0.00"
+            owner = ws.cell(row=row, column=4).value
+            if owner:
+                owner_tint.setdefault(owner, set()).add(rgb(ws.cell(row=row, column=4)))
+        for owner, tints in owner_tint.items():
+            assert len(tints) == 1 and list(tints)[0], f"{owner} tint {tints}"
+        trow = hr + 1 + len(pays)
+        assert ws.cell(row=trow, column=4).value == "TOTAL"
+        assert round(float(ws.cell(row=trow, column=7).value), 2) == \
+            round(statement["totals"]["total_received"], 2)
+&gt;       assert "Colour key — owner" in cells_text(ws)
+E       assert 'Colour key — owner' in ['Sunrise Residency — Payments &amp; Payouts Ledger', 'August 2026', 'S.No', 'Date', 'Flat No.', 'Owner', ...]
+E        +  where ['Sunrise Residency — Payments &amp; Payouts Ledger', 'August 2026', 'S.No', 'Date', 'Flat No.', 'Owner', ...] = cells_text(&lt;Worksheet "Ledger"&gt;)
+
+tests/test_iter11_xlsx_export.py:328: AssertionError</failure></testcase><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_ledger_colour_key_lists_only_owners" time="0.000"><failure message="StopIteration">self = &lt;test_iter11_xlsx_export.TestMisWorkbook object at 0xff237fab1290&gt;
+wb = &lt;openpyxl.workbook.workbook.Workbook object at 0xff237f4e94d0&gt;
+statement = {'rows': [{'flat_id': '6a89cf3fef0513f1ab6b2a25', 'flat_number': '101', 'floor': 'Ground', 'owner_name': 'Ramesh Kumar...1ab6b2a2a', 'label': 'Meter 201', 'flat_id': '6a89cf3fef0513f1ab6b2a29', 'flat_number': '201', ...}], 'flags': [], ...}
+
+    def test_ledger_colour_key_lists_only_owners(self, wb, statement):
+        """The shared owner palette also receives flat numbers (tanker/charge payers),
+        so the Ledger 'Colour key — owner' block leaks flat numbers as owner entries."""
+        ws = wb["Ledger"]
+&gt;       start = next(r for r in range(1, ws.max_row + 1)
+                     if str(ws.cell(row=r, column=1).value or "") == "Colour key — owner")
+E       StopIteration
+
+tests/test_iter11_xlsx_export.py:334: StopIteration</failure></testcase><testcase classname="tests.test_iter11_xlsx_export.TestMisWorkbook" name="test_owner_tints_consistent_across_sheets" time="0.000" /><testcase classname="tests.test_iter11_xlsx_export.TestVerbatimRename" name="test_owner_rename_reflected" time="0.302" /><testcase classname="tests.test_iter11_xlsx_export.TestVerbatimRename" name="test_meter_rename_not_supported_by_api" time="0.055" /><testcase classname="tests.test_iter11_xlsx_export.TestVerbatimRename" name="test_new_meter_label_verbatim" time="0.245"><failure message="AssertionError: two meters of flat 101 share a tint ['FCF0E2', 'FCF0E2']&#10;assert 1 == 2&#10; +  where 1 = len({'FCF0E2'})&#10; +    where {'FCF0E2'} = set(['FCF0E2', 'FCF0E2'])&#10; +  and   2 = len(['FCF0E2', 'FCF0E2'])">self = &lt;test_iter11_xlsx_export.TestVerbatimRename object at 0xff237fab2dd0&gt;
+client = &lt;requests.sessions.Session object at 0xff237f8ad390&gt;
+prop = {'name': 'Sunrise Residency', 'address': '12th Cross, Indiranagar, Bengaluru', 'default_payers': {'water': 'tenant', '... 'tenant', ...}, 'recurring_defaults': {'security': 6000, 'electricity': 3500, 'cleaning': 4000, 'sweeper': 2500}, ...}
+month = '2026-08'
+statement = {'rows': [{'flat_id': '6a89cf3fef0513f1ab6b2a25', 'flat_number': '101', 'floor': 'Ground', 'owner_name': 'Ramesh Kumar...1ab6b2a2a', 'label': 'Meter 201', 'flat_id': '6a89cf3fef0513f1ab6b2a29', 'flat_number': '201', ...}], 'flags': [], ...}
+
+    def test_new_meter_label_verbatim(self, client, prop, month, statement):
+        """Special-character meter label must appear verbatim in the Excel meter column."""
+        flat_id = statement["rows"][0]["flat_id"]
+        label = "QA Meter 9X/1 (Sump) #2"
+        r = client.post(f"{API}/meters", json={"property_id": prop["id"], "flat_id": flat_id,
+                                              "label": label, "opening": 10})
+        assert r.status_code == 200, r.text
+        mid = r.json()["id"]
+        try:
+            resp = client.get(f"{API}/mis/export", params={"property_id": prop["id"],
+                                                          "month": month, "format": "xlsx"})
+            assert resp.status_code == 200, resp.text[:200]
+            ws = load_workbook(io.BytesIO(resp.content))["Water Usage (Meters)"]
+            assert label in cells_text(ws), "new meter label missing from Excel"
+            # a flat with TWO meters must show TWO different tints
+            hr = find_header_row(ws, "S.No")
+            flat_no = statement["rows"][0]["flat_number"]
+            tints = [rgb(ws.cell(row=r, column=5)) for r in range(hr + 1, ws.max_row + 1)
+                     if str(ws.cell(row=r, column=2).value) == str(flat_no)
+                     and ws.cell(row=r, column=5).value not in (None, "TOTAL")]
+            assert len(tints) &gt;= 2, f"expected 2 meter rows for flat {flat_no}, got {tints}"
+&gt;           assert len(set(tints)) == len(tints), f"two meters of flat {flat_no} share a tint {tints}"
+E           AssertionError: two meters of flat 101 share a tint ['FCF0E2', 'FCF0E2']
+E           assert 1 == 2
+E            +  where 1 = len({'FCF0E2'})
+E            +    where {'FCF0E2'} = set(['FCF0E2', 'FCF0E2'])
+E            +  and   2 = len(['FCF0E2', 'FCF0E2'])
+
+tests/test_iter11_xlsx_export.py:407: AssertionError</failure></testcase><testcase classname="tests.test_iter11_xlsx_export.TestRentalsWorkbook" name="test_media_type_and_sheets" time="0.452" /><testcase classname="tests.test_iter11_xlsx_export.TestRentalsWorkbook" name="test_headers_styled" time="0.000" /><testcase classname="tests.test_iter11_xlsx_export.TestRentalsWorkbook" name="test_rent_roll_values_and_tints" time="0.063" /><testcase classname="tests.test_iter11_xlsx_export.TestRentalsWorkbook" name="test_collections_modes_and_reference" time="0.052" /><testcase classname="tests.test_iter11_xlsx_export.TestRentalsWorkbook" name="test_payouts_and_settlement_and_deposits" time="0.000" /><testcase classname="tests.test_iter11_xlsx_export.TestRentalsWorkbook" name="test_property_tints_consistent_across_sheets" time="0.000" /><testcase classname="tests.test_iter11_xlsx_export.TestExportRegression" name="test_mis_csv_pdf" time="0.126" /><testcase classname="tests.test_iter11_xlsx_export.TestExportRegression" name="test_annual_exports" time="0.136" /><testcase classname="tests.test_iter11_xlsx_export.TestExportRegression" name="test_rentals_csv_pdf" time="0.131" /><testcase classname="tests.test_iter11_xlsx_export.TestExportRegression" name="test_unknown_format_silently_returns_pdf" time="0.054" /><testcase classname="tests.test_iter11_xlsx_export.TestExportRegression" name="test_xlsx_requires_auth" time="0.125" /><testcase classname="tests.test_iter11_xlsx_export.TestExportRegression" name="test_invalid_property_id" time="0.270" /></testsuite></testsuites>
